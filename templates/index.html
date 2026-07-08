@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣大盤與 ETF 智能追蹤 Dashboard</title>
+    <!-- Google Fonts Outfit & Noto Sans TC -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Outfit:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome 圖示 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 側邊欄 Navigation -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fa-solid fa-chart-line-up logo-icon"></i>
+                <h2>TW Stock Tracker</h2>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-tab="dashboard"><i class="fa-solid fa-chart-pie"></i><span>儀表板</span></a>
+                <a href="#" class="nav-item" data-tab="charts"><i class="fa-solid fa-chart-area"></i><span>技術圖表</span></a>
+                <a href="#" class="nav-item" data-tab="settings"><i class="fa-solid fa-sliders"></i><span>通知設定</span></a>
+            </nav>
+            <div class="system-status">
+                <div class="status-indicator online"></div>
+                <span>系統監控中</span>
+            </div>
+        </aside>
+
+        <!-- 主要內容區 -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-title">
+                    <h1 id="page-title">即時監控儀表板</h1>
+                    <p id="last-sync-text">最後更新時間：載入中...</p>
+                </div>
+                <div class="header-actions">
+                    <button id="btn-sync" class="btn btn-secondary"><i class="fa-solid fa-rotate"></i> 立即重新整理</button>
+                </div>
+            </header>
+
+            <!-- 頁籤一：儀表板 -->
+            <section id="tab-dashboard" class="tab-content active">
+                <!-- 大盤與 ETF 焦點卡片 -->
+                <div class="cards-grid">
+                    <!-- 大盤卡片 -->
+                    <div class="card index-card" id="card-twii">
+                        <div class="card-header">
+                            <span class="card-tag">台股大盤</span>
+                            <i class="fa-solid fa-landmark"></i>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="symbol-name">加權指數 (^TWII)</h3>
+                            <div class="price-value" id="twii-price">--.--</div>
+                            <div class="price-change" id="twii-change">--.-- (--.--)</div>
+                        </div>
+                        <div class="card-footer">
+                            <div class="drop-status">
+                                <span class="status-label">今日下跌：</span>
+                                <span class="status-val" id="twii-today-drop">0 點</span>
+                            </div>
+                            <div class="drop-status">
+                                <span class="status-label">波段高點：</span>
+                                <span class="status-val" id="twii-wave-high">0 點</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 0050 卡片 -->
+                    <div class="card etf-card" id="card-0050">
+                        <div class="card-header">
+                            <span class="card-tag">台灣 50</span>
+                            <i class="fa-solid fa-coins"></i>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="symbol-name">元大台灣50 (0050.TW)</h3>
+                            <div class="price-value" id="0050-price">--.--</div>
+                            <div class="price-change" id="0050-change">--.-- (--.--)</div>
+                        </div>
+                        <div class="card-footer">
+                            <div class="tech-indicator">
+                                <span class="status-label">KD (9,3,3)：</span>
+                                <span class="status-val" id="0050-kd">K: -- / D: --</span>
+                            </div>
+                            <div class="signal-badge" id="0050-signal-badge">無訊號</div>
+                        </div>
+                    </div>
+
+                    <!-- 00646 卡片 -->
+                    <div class="card etf-card" id="card-00646">
+                        <div class="card-header">
+                            <span class="card-tag">S&P 500</span>
+                            <i class="fa-solid fa-globe"></i>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="symbol-name">元大S&P500 (00646.TW)</h3>
+                            <div class="price-value" id="00646-price">--.--</div>
+                            <div class="price-change" id="00646-change">--.-- (--.--)</div>
+                        </div>
+                        <div class="card-footer">
+                            <div class="tech-indicator">
+                                <span class="status-label">KD (9,3,3)：</span>
+                                <span class="status-val" id="00646-kd">K: -- / D: --</span>
+                            </div>
+                            <div class="signal-badge" id="00646-signal-badge">無訊號</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 下方區塊：警報狀態與通知歷史 -->
+                <div class="dashboard-details">
+                    <div class="detail-panel alarm-status-panel">
+                        <h3><i class="fa-solid fa-bell-exclamation text-warning"></i> 目前警報觸發狀態</h3>
+                        <div class="status-list">
+                            <div class="status-item">
+                                <span class="item-title">當日下跌 500 點通知門檻</span>
+                                <span class="badge" id="badge-drop-500">未觸發</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="item-title">今日累計已通知關卡</span>
+                                <span class="badge badge-info" id="list-today-drops">無</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="item-title">波段最高點累計下跌門檻</span>
+                                <span class="badge" id="badge-wave-drop">未觸發</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="item-title">波段已通知關卡</span>
+                                <span class="badge badge-info" id="list-wave-drops">無</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="detail-panel log-panel">
+                        <h3><i class="fa-solid fa-list-timeline"></i> 系統通知紀錄</h3>
+                        <div class="log-container" id="log-list">
+                            <div class="log-empty">尚無今日通知紀錄。</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 頁籤二：技術圖表 -->
+            <section id="tab-charts" class="tab-content">
+                <div class="chart-selector">
+                    <button class="btn btn-tab active" data-chart="TWII">台股大盤指數</button>
+                    <button class="btn btn-tab" data-chart="0050">元大台灣 50 (0050)</button>
+                    <button class="btn btn-tab" data-chart="00646">元大 S&P 500 (00646)</button>
+                </div>
+                <div class="chart-wrapper card">
+                    <div class="chart-header">
+                        <h3 id="chart-title">台股大盤指數 歷史走勢</h3>
+                        <p class="chart-subtitle">最近 40 天日 K 線趨勢</p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="stock-chart"></canvas>
+                    </div>
+                    <div class="chart-container secondary-chart" id="kd-chart-container" style="display:none;">
+                        <canvas id="kd-chart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 頁籤三：通知設定 -->
+            <section id="tab-settings" class="tab-content">
+                <div class="settings-grid">
+                    <div class="card settings-card">
+                        <h3><i class="fa-brands fa-line text-success"></i> LINE Messaging API 配置</h3>
+                        <form id="form-settings">
+                            <div class="form-group">
+                                <label for="line-token">Channel Access Token</label>
+                                <input type="password" id="line-token" placeholder="輸入您的 Channel Access Token" required>
+                                <small>LINE Developer 發行的長期有效 Token。</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="line-userid">Your User ID</label>
+                                <input type="text" id="line-userid" placeholder="輸入您的 LINE User ID (如 U123...)" required>
+                                <small>位於 Basic Settings 頁面底部的 33 碼 User ID。</small>
+                            </div>
+                            <div class="divider"></div>
+                            <h3><i class="fa-solid fa-sliders"></i> 追蹤警報參數</h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="drop-threshold">大盤跌幅警報門檻 (點)</label>
+                                    <input type="number" id="drop-threshold" min="100" max="2000" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="drop-step">後續每再跌多少點通知 (點)</label>
+                                    <input type="number" id="drop-step" min="50" max="500" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="kd-limit">KD 低檔門檻</label>
+                                    <input type="number" id="kd-limit" min="10" max="50" required>
+                                </div>
+                            </div>
+                            <div class="form-row checkbox-row">
+                                <label class="checkbox-container">
+                                    <input type="checkbox" id="use-kd" checked>
+                                    <span class="checkmark"></span>
+                                    啟用 KD 低檔黃金交叉進場策略
+                                </label>
+                            </div>
+                            <div class="form-row checkbox-row">
+                                <label class="checkbox-container">
+                                    <input type="checkbox" id="use-bollinger" checked>
+                                    <span class="checkmark"></span>
+                                    啟用 價格跌破布林通道下軌進場策略
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="btn-save-settings"><i class="fa-solid fa-floppy-disk"></i> 儲存設定</button>
+                        </form>
+                    </div>
+
+                    <div class="card settings-card action-card">
+                        <h3><i class="fa-solid fa-screwdriver-wrench"></i> 系統測試與說明</h3>
+                        <div class="test-panel">
+                            <p>點擊下方按鈕以發送測試訊息，驗證 LINE Bot 是否能正確將訊息推送至您的手機。</p>
+                            <div class="form-group">
+                                <input type="text" id="test-message" value="🔔 測試通知：您的台灣大盤與 ETF 追蹤機器人已就緒！">
+                            </div>
+                            <button id="btn-test-line" class="btn btn-success"><i class="fa-brands fa-line"></i> 發送測試通知</button>
+                            <div id="test-status" class="test-status-msg"></div>
+                        </div>
+                        <div class="guide-panel">
+                            <h4>如何設定 LINE 機器人？</h4>
+                            <ol>
+                                <li>造訪 <a href="https://developers.line.biz/" target="_blank">LINE Developers Console</a> 並登入。</li>
+                                <li>點擊 "Create a new provider" 建立服務商。</li>
+                                <li>點擊 "Create a Messaging API channel" 建立機器人頻道。</li>
+                                <li>在 Messaging API 設定頁籤中掃描 QR Code 將 Bot 加為好友。</li>
+                                <li>在該頁籤底部點選 Issue 取得 Channel Access Token。</li>
+                                <li>在 Basic Settings 頁籤最下方複製您的 User ID。</li>
+                                <li>在左側表單中填入並點選儲存。</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
