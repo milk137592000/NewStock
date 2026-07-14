@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
-from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators
+from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei
 from scheduler import start_scheduler, shutdown_scheduler
 
 # 設定日誌
@@ -63,7 +63,7 @@ async def startup_event():
     global last_fetch_time, cached_data
     try:
         cached_data = run_tracking_cycle()
-        last_fetch_time = datetime.now()
+        last_fetch_time = now_taipei()
     except Exception as e:
         logger.error(f"啟動時初始化數據失敗: {e}")
 
@@ -90,13 +90,13 @@ async def health_check():
         "scheduler_running": scheduler.running,
         "jobs_count": len(jobs),
         "jobs": jobs,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": now_taipei().isoformat()
     }
 
 @app.get("/api/status")
 async def get_status():
     global last_fetch_time, cached_data
-    now = datetime.now()
+    now = now_taipei()
     
     # 若無快取或快取已過期，則重新獲取
     if not cached_data or not last_fetch_time or (now - last_fetch_time) > CACHE_DURATION:
@@ -120,7 +120,7 @@ async def trigger_monitoring():
     global last_fetch_time, cached_data
     try:
         cached_data = run_tracking_cycle()
-        last_fetch_time = datetime.now()
+        last_fetch_time = now_taipei()
         return {"success": True, "message": "已成功強制執行追蹤並更新數據", "data": cached_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"手動觸發失敗: {e}")
@@ -200,7 +200,7 @@ async def update_config(update_data: ConfigUpdate):
         # 立即強制執行一次循環，將新參數套用
         global last_fetch_time, cached_data
         cached_data = run_tracking_cycle()
-        last_fetch_time = datetime.now()
+        last_fetch_time = now_taipei()
         
         return {"success": True, "message": "設定已成功儲存並生效"}
     except Exception as e:

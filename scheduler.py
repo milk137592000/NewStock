@@ -5,18 +5,21 @@ from tracker import run_tracking_cycle
 import requests
 import os
 import logging
+import pytz
 
 # 設定日誌
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scheduler")
 
-scheduler = BackgroundScheduler()
+# 台北時區
+TZ_TAIPEI = pytz.timezone("Asia/Taipei")
+
+scheduler = BackgroundScheduler(timezone=TZ_TAIPEI)
 
 def keep_alive():
     """定時 Ping 自己的 /health 端點，防止 Render 免費版因無流量而休眠"""
     app_url = os.environ.get("RENDER_EXTERNAL_URL", "")
     if not app_url:
-        # 如果沒有設定 RENDER_EXTERNAL_URL，嘗試手動拼接
         app_url = os.environ.get("APP_URL", "")
     
     if app_url:

@@ -4,8 +4,19 @@ import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from dotenv import load_dotenv
+
+# 台北時區 (UTC+8)
+TZ_TAIPEI = timezone(timedelta(hours=8))
+
+def now_taipei():
+    """取得台北時間的 datetime"""
+    return datetime.now(TZ_TAIPEI)
+
+def today_taipei():
+    """取得台北時間的 date"""
+    return datetime.now(TZ_TAIPEI).date()
 
 # 載入環境變數
 load_dotenv()
@@ -248,7 +259,7 @@ def get_historical_and_indicators(symbol: str, config: dict) -> dict:
 
 def check_market_drop(current_index: float, yesterday_close: float, state: dict, config: dict) -> dict:
     """檢查大盤下跌警報邏輯"""
-    today_str = date.today().isoformat()
+    today_str = today_taipei().isoformat()
     messages = []
     
     # 1. 跨日檢查與狀態重設
@@ -334,7 +345,7 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
 
 def check_etf_signals(symbol: str, name: str, data: dict, state: dict, config: dict) -> list:
     """檢查 0050 與 00646 的進場訊號"""
-    today_str = date.today().isoformat()
+    today_str = today_taipei().isoformat()
     messages = []
     
     # 檢查今天是否已經發送過該 ETF 的通知，一天只通知一次，避免盤中震盪重複通知
@@ -367,7 +378,7 @@ def check_etf_signals(symbol: str, name: str, data: dict, state: dict, config: d
             f"偵測到符合設定的進場訊號：\n"
             f"- {strategies_str}\n"
             f"💲 目前即時價格：{price:.2f}\n"
-            f"📅 觸發時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"📅 觸發時間：{now_taipei().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         messages.append(msg)
         state["signals_notified"][symbol] = today_str
@@ -376,7 +387,7 @@ def check_etf_signals(symbol: str, name: str, data: dict, state: dict, config: d
 
 def run_tracking_cycle() -> dict:
     """執行一次完整的監控與分析循環"""
-    print(f"\n[TRACKER] 開始執行監控循環：{datetime.now().isoformat()}")
+    print(f"\n[TRACKER] 開始執行監控循環：{now_taipei().isoformat()}")
     config = get_env_config()
     state = load_state()
     
@@ -471,7 +482,7 @@ def run_tracking_cycle() -> dict:
     save_state(state)
     
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_taipei().isoformat(),
         "drop_info": drop_info,
         "etf_info": etf_info,
         "notified_messages": all_notifications,
