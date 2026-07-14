@@ -78,6 +78,21 @@ async def get_index():
         return FileResponse(index_path)
     return HTMLResponse("<h3>index.html 尚未建立，請確認前端檔案已就緒。</h3>")
 
+@app.get("/health")
+async def health_check():
+    """健康檢查端點，供 Keep-Alive 防休眠機制與外部 Cron 服務使用"""
+    from scheduler import scheduler
+    jobs = []
+    if scheduler.running:
+        jobs = [{"id": job.id, "name": job.name, "next_run": str(job.next_run_time)} for job in scheduler.get_jobs()]
+    return {
+        "status": "ok",
+        "scheduler_running": scheduler.running,
+        "jobs_count": len(jobs),
+        "jobs": jobs,
+        "timestamp": datetime.now().isoformat()
+    }
+
 @app.get("/api/status")
 async def get_status():
     global last_fetch_time, cached_data
