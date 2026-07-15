@@ -86,7 +86,11 @@ def load_state() -> dict:
         "wave_notified_drops": [],
         "signals_notified": {
             "0050": "",
-            "00646": ""
+            "00646": "",
+            "00692": "",
+            "00850": "",
+            "00662": "",
+            "00830": ""
         }
     }
     if os.path.exists(STATE_FILE):
@@ -110,9 +114,21 @@ def save_state(state: dict):
     except Exception as e:
         print(f"[STATE ERROR] 寫入狀態檔失敗: {e}")
 
+# 追蹤的 ETF 清單定義
+ETF_LIST = {
+    "0050":  {"name": "元大台灣50",     "yf": "0050.TW",  "exchange": "tse"},
+    "00646": {"name": "元大S&P500",     "yf": "00646.TW", "exchange": "tse"},
+    "00692": {"name": "富邦公司治理",   "yf": "00692.TW", "exchange": "tse"},
+    "00850": {"name": "元大臺灣ESG永續", "yf": "00850.TW", "exchange": "tse"},
+    "00662": {"name": "富邦NASDAQ",     "yf": "00662.TW", "exchange": "tse"},
+    "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse"},
+}
+
 def get_twse_realtime() -> dict:
-    """從證交所 API 獲取即時大盤與 0050、00646 的盤中數據"""
-    url = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw|tse_0050.tw|tse_00646.tw"
+    """從證交所 API 獲取即時大盤與所有追蹤 ETF 的盤中數據"""
+    # 動態建立查詢字串
+    etf_query = "|".join([f"{info['exchange']}_{code}.tw" for code, info in ETF_LIST.items()])
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw|{etf_query}"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
@@ -344,6 +360,9 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
     }
 
 def check_etf_signals(symbol: str, name: str, data: dict, state: dict, config: dict) -> list:
+    # 確保 signals_notified 中有該 symbol 的 key
+    if symbol not in state.get("signals_notified", {}):
+        state.setdefault("signals_notified", {})[symbol] = ""
     """檢查 0050 與 00646 的進場訊號"""
     today_str = today_taipei().isoformat()
     messages = []
@@ -415,17 +434,18 @@ def run_tracking_cycle() -> dict:
             print(f"[YFINANCE ERROR] 獲取 ^TWII 異常: {e}")
             current_index, yesterday_close = 0.0, 0.0
             
-    # 2. 獲取 ETF 技術指標 (0050 & 00646)
-    # 0050 (代碼 0050.TW)
-    info_0050 = get_historical_and_indicators("0050.TW", config)
-    # 00646 (代碼 00646.TW)
-    info_00646 = get_historical_and_indicators("00646.TW", config)
-    
-    # 如果有證交所即時價格，用即時價格更新最新的 Close 價格，以便盤中即時判定
-    if info_0050 and "0050" in realtime:
-        info_0050["price"] = realtime["0050"]["price"]
-    if info_00646 and "00646" in realtime:
-        info_00646["price"] = realtime["00646"]["price"]
+    # 2. 獲取所有追蹤 ETF 的技術指標
+    etf_indicators = {}
+    for code, meta in ETF_LIST.items():
+        try:
+            info = get_historical_and_indicators(meta["yf"], config)
+            if info:
+                # 如果有證交所即時價格，用即時價格更新
+                if code in realtime:
+                    info["price"] = realtime[code]["price"]
+                etf_indicators[code] = info
+        except Exception as e:
+            print(f"[TRACKER ERROR] 獲取 {code} ({meta['name']}) 指標失敗: {e}")
         
     all_notifications = []
     
@@ -449,30 +469,21 @@ def run_tracking_cycle() -> dict:
             "cumulative_drop": 0.0
         }
         
-    # 4. 檢查 ETF 進場訊號
+    # 4. 檢查所有 ETF 進場訊號
     etf_info = {}
-    if info_0050:
-        sig_0050 = check_etf_signals("0050.TW", "元大台灣50", info_0050, state, config)
-        all_notifications.extend(sig_0050)
-        etf_info["0050"] = {
-            "price": info_0050["price"],
-            "K": info_0050["K"],
-            "D": info_0050["D"],
-            "MA": info_0050["MA"],
-            "Lower": info_0050["Lower"],
-            "signal": len(sig_0050) > 0
-        }
-    if info_00646:
-        sig_00646 = check_etf_signals("00646.TW", "元大S&P500", info_00646, state, config)
-        all_notifications.extend(sig_00646)
-        etf_info["00646"] = {
-            "price": info_00646["price"],
-            "K": info_00646["K"],
-            "D": info_00646["D"],
-            "MA": info_00646["MA"],
-            "Lower": info_00646["Lower"],
-            "signal": len(sig_00646) > 0
-        }
+    for code, meta in ETF_LIST.items():
+        info = etf_indicators.get(code)
+        if info:
+            sig = check_etf_signals(meta["yf"], meta["name"], info, state, config)
+            all_notifications.extend(sig)
+            etf_info[code] = {
+                "price": info["price"],
+                "K": info["K"],
+                "D": info["D"],
+                "MA": info["MA"],
+                "Lower": info["Lower"],
+                "signal": len(sig) > 0
+            }
         
     # 5. 發送 LINE 通知
     for msg in all_notifications:

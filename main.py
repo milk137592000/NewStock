@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
-from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei
+from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST
 from scheduler import start_scheduler, shutdown_scheduler
 
 # 設定日誌
@@ -214,10 +214,8 @@ async def get_chart_data(symbol: str):
     yf_symbol = symbol
     if symbol == "TWII":
         yf_symbol = "^TWII"
-    elif symbol == "0050":
-        yf_symbol = "0050.TW"
-    elif symbol == "00646":
-        yf_symbol = "00646.TW"
+    elif symbol in ETF_LIST:
+        yf_symbol = ETF_LIST[symbol]["yf"]
         
     try:
         info = get_historical_and_indicators(yf_symbol, config)
@@ -235,7 +233,7 @@ async def get_chart_data(symbol: str):
             "prices": close_prices,
         }
         
-        if yf_symbol in ["0050.TW", "00646.TW"]:
+        if yf_symbol != "^TWII":
             chart_data.update({
                 "K": df["K"].tolist(),
                 "D": df["D"].tolist(),

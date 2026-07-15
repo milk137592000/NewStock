@@ -258,11 +258,12 @@ async function fetchStatus() {
             }
         }
         
-        // 渲染 0050 卡片
-        updateEtfCard('0050', result.etf_info?.['0050'], result.state?.yesterday_close);
-        
-        // 渲染 00646 卡片
-        updateEtfCard('00646', result.etf_info?.['00646'], result.state?.yesterday_close);
+        // 渲染所有 ETF 卡片
+        const etfInfo = result.etf_info || {};
+        const etfIds = ['0050', '00646', '00692', '00850', '00662', '00830'];
+        etfIds.forEach(id => {
+            updateEtfCard(id, etfInfo[id], result.state?.yesterday_close);
+        });
         
         // 渲染通知紀錄
         updateNotificationsLog(result.notified_messages, result.state?.date);
