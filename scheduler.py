@@ -33,39 +33,42 @@ def keep_alive():
 
 def start_scheduler():
     if not scheduler.running:
-        # 1. 交易時間排程：週一至週五 09:00 至 13:59，每分鐘執行一次
+        # 1. 交易時間排程：週一至週五 09:00 至 13:59 (台北時間)，每分鐘執行一次
         scheduler.add_job(
             func=run_tracking_cycle,
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour="9-13",
-                minute="*"
+                minute="*",
+                timezone=TZ_TAIPEI
             ),
             id="trading_hours_job",
             name="台股交易時間每分鐘監控",
             replace_existing=True
         )
         
-        # 2. 盤後最終確認排程：週一至週五 14:00 執行一次
+        # 2. 盤後最終確認排程：週一至週五 14:00 (台北時間) 執行一次
         scheduler.add_job(
             func=run_tracking_cycle,
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour=14,
-                minute=0
+                minute=0,
+                timezone=TZ_TAIPEI
             ),
             id="after_market_job",
             name="收盤盤後最終確認與分析",
             replace_existing=True
         )
         
-        # 3. 晚間美股時段排程 (為 00646 追蹤美股)：週一至週五 22:00 執行一次
+        # 3. 晚間美股時段排程 (為 00646 追蹤美股)：週一至週五 22:00 (台北時間) 執行一次
         scheduler.add_job(
             func=run_tracking_cycle,
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour=22,
-                minute=0
+                minute=0,
+                timezone=TZ_TAIPEI
             ),
             id="night_market_job",
             name="晚間美股時段指標分析",
@@ -83,6 +86,9 @@ def start_scheduler():
         
         scheduler.start()
         logger.info("APScheduler 已成功啟動，並已排定監控任務（含防休眠機制）。")
+        logger.info(f"Scheduler timezone: {scheduler.timezone}")
+        for job in scheduler.get_jobs():
+            logger.info(f"  Job '{job.name}' next_run: {job.next_run_time}")
 
 def shutdown_scheduler():
     if scheduler.running:

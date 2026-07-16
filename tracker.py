@@ -286,7 +286,16 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         # wave_high 如果是 0，則以昨日收盤價初始化
         if state["wave_high"] <= 0:
             state["wave_high"] = yesterday_close
+        # 重設 ETF 進場訊號通知狀態
+        for key in state.get("signals_notified", {}):
+            state["signals_notified"][key] = ""
         print(f"[STATE RESET] 偵測到新的一天 {today_str}。昨收價設為 {yesterday_close}，波段最高點為 {state['wave_high']}")
+    
+    # 2. 每次執行時，都用 TWSE API 回傳的 yesterday_close 校正 state
+    #    防止因排程時區錯誤或服務重啟，導致 state 中的 yesterday_close 為過期值
+    if yesterday_close > 0 and abs(state["yesterday_close"] - yesterday_close) > 1.0:
+        print(f"[STATE FIX] 校正 yesterday_close: {state['yesterday_close']:.2f} -> {yesterday_close:.2f} (來自 TWSE API)")
+        state["yesterday_close"] = yesterday_close
     
     y_close = state["yesterday_close"]
     if y_close <= 0:
