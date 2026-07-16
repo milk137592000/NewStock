@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
-from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST
+from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST, GROUP_LABELS
 from scheduler import start_scheduler, shutdown_scheduler
 
 # 設定日誌

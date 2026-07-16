@@ -288,6 +288,57 @@ body {
     border: 1px solid var(--card-border);
 }
 
+/* 分組標籤色彩 */
+.card-tag.group-low {
+    background: rgba(56, 189, 248, 0.15);
+    border-color: rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+}
+.card-tag.group-mid {
+    background: rgba(168, 85, 247, 0.15);
+    border-color: rgba(168, 85, 247, 0.3);
+    color: #a855f7;
+}
+.card-tag.group-high {
+    background: rgba(251, 146, 60, 0.15);
+    border-color: rgba(251, 146, 60, 0.3);
+    color: #fb923c;
+}
+
+/* 卡片統計列 */
+.card-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.75rem;
+}
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+}
+
+/* 52 週跌幅色階 */
+.drop-value {
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+}
+.drop-value.drop-low { color: #4ade80; }
+.drop-value.drop-mid { color: #facc15; }
+.drop-value.drop-high { color: #fb923c; }
+.drop-value.drop-severe { color: #f87171; }
+
+/* 冷卻期狀態 */
+.cooldown-status {
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+.cooldown-status.ready { color: #4ade80; }
+.cooldown-status.cooling { color: #facc15; }
+
 .card-header i {
     font-size: 1.25rem;
 }

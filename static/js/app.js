@@ -281,30 +281,57 @@ function updateEtfCard(id, etfData, refClose) {
     const changeEl = document.getElementById(`${id}-change`);
     const kdEl = document.getElementById(`${id}-kd`);
     const badgeEl = document.getElementById(`${id}-signal-badge`);
+    const dropEl = document.getElementById(`${id}-drop52w`);
+    const cooldownEl = document.getElementById(`${id}-cooldown`);
     
-    priceEl.textContent = etfData.price.toFixed(2);
+    if (priceEl) priceEl.textContent = etfData.price.toFixed(2);
     
-    // 由於 yfinance / 證交所 API 能拿到當前的歷史 K，我們簡易以 (當前 - 昨日中軌或移動估算值) 當作起伏。
-    // 這邊僅展示當前價格，為了美觀，若有 prev_price 可以做計算。如果沒有，我們先預設顯示。
-    // 我們的 API 暫時沒有直接丟漲跌幅給 ETF，但我們可以簡單地從 API 計算 (etfData.price 已經是最新值，而 indicator 計算時的歷史日K最後一筆收盤價可用來算變動)。
-    // 由於 yfinance 計算出來的價格是日K最後一天。
-    // 這邊簡單做個假定：如果有 MA 或 KD 代表計算已完成，我們顯示最新的 KD。
-    kdEl.textContent = `K: ${etfData.K.toFixed(1)} / D: ${etfData.D.toFixed(1)}`;
+    // 顯示日線 KD
+    if (kdEl) kdEl.textContent = `K: ${etfData.K.toFixed(1)} / D: ${etfData.D.toFixed(1)}`;
     
-    // 渲染進場訊號 Badge
-    if (etfData.signal) {
-        badgeEl.className = 'signal-badge buy';
-        badgeEl.textContent = '買進訊號';
-    } else {
-        badgeEl.className = 'signal-badge';
-        badgeEl.textContent = '無訊號';
+    // 52 週高點跌幅
+    if (dropEl && etfData.drop_from_high_pct !== undefined) {
+        const drop = etfData.drop_from_high_pct;
+        dropEl.textContent = `-${drop.toFixed(1)}%`;
+        if (drop >= 20) {
+            dropEl.className = 'drop-value drop-severe';
+        } else if (drop >= 15) {
+            dropEl.className = 'drop-value drop-high';
+        } else if (drop >= 10) {
+            dropEl.className = 'drop-value drop-mid';
+        } else {
+            dropEl.className = 'drop-value drop-low';
+        }
     }
     
-    // 我們可以從 /api/chart/{id} 發送去讀歷史，但為免繁重，這裡價格的漲跌比率就不一定要放，或者等圖表載入後再算。
-    // 我們也可以在此處只留價格，但既然要精美，我們可以給它計算一個與 MA 的偏差率
-    const deviation = ((etfData.price - etfData.MA) / etfData.MA) * 100;
-    changeEl.textContent = `乖離率: ${deviation >= 0 ? '+' : ''}${deviation.toFixed(2)}% (vs 20MA)`;
-    changeEl.className = `price-change ${deviation >= 0 ? 'up' : 'down'}`;
+    // 冷卻期狀態
+    if (cooldownEl) {
+        if (etfData.in_cooldown) {
+            cooldownEl.innerHTML = `<i class="fa-solid fa-clock"></i> 冷卻中 (至 ${etfData.cooldown_until || '?'})`;
+            cooldownEl.className = 'cooldown-status cooling';
+        } else {
+            cooldownEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> 可加碼';
+            cooldownEl.className = 'cooldown-status ready';
+        }
+    }
+    
+    // 乖離率
+    if (changeEl) {
+        const deviation = ((etfData.price - etfData.MA) / etfData.MA) * 100;
+        changeEl.textContent = `乖離率: ${deviation >= 0 ? '+' : ''}${deviation.toFixed(2)}% (vs 20MA)`;
+        changeEl.className = `price-change ${deviation >= 0 ? 'up' : 'down'}`;
+    }
+    
+    // 進場訊號 Badge
+    if (badgeEl) {
+        if (etfData.signal) {
+            badgeEl.className = 'signal-badge buy';
+            badgeEl.textContent = '買進訊號';
+        } else {
+            badgeEl.className = 'signal-badge';
+            badgeEl.textContent = '無訊號';
+        }
+    }
 }
 
 // 輔助函數：更新通知紀錄 Log

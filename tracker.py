@@ -78,6 +78,11 @@ def send_line_message(message: str) -> bool:
 
 def load_state() -> dict:
     """載入警報狀態"""
+    default_signal_state = {
+        "last_trigger_date": "",
+        "cooldown_until": "",
+        "trigger_count_this_year": 0
+    }
     default_state = {
         "date": "",
         "yesterday_close": 0.0,
@@ -85,12 +90,8 @@ def load_state() -> dict:
         "wave_high": 0.0,
         "wave_notified_drops": [],
         "signals_notified": {
-            "0050": "",
-            "00646": "",
-            "00692": "",
-            "00850": "",
-            "00662": "",
-            "00830": ""
+            code: dict(default_signal_state) for code in
+            ["0050", "00646", "00692", "00850", "00662", "00830"]
         }
     }
     if os.path.exists(STATE_FILE):
@@ -114,15 +115,31 @@ def save_state(state: dict):
     except Exception as e:
         print(f"[STATE ERROR] 寫入狀態檔失敗: {e}")
 
-# 追蹤的 ETF 清單定義
-ETF_LIST = {
-    "0050":  {"name": "元大台灣50",     "yf": "0050.TW",  "exchange": "tse"},
-    "00646": {"name": "元大S&P500",     "yf": "00646.TW", "exchange": "tse"},
-    "00692": {"name": "富邦公司治理",   "yf": "00692.TW", "exchange": "tse"},
-    "00850": {"name": "元大臺灣ESG永續", "yf": "00850.TW", "exchange": "tse"},
-    "00662": {"name": "富邦NASDAQ",     "yf": "00662.TW", "exchange": "tse"},
-    "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse"},
+# 分組標籤
+GROUP_LABELS = {
+    "low_vol": "低波動組",
+    "mid_vol": "中波動組",
+    "high_vol": "高波動組",
 }
+
+# 追蹤的 ETF 清單定義（含分組參數）
+ETF_LIST = {
+    "00646": {"name": "元大S&P500",     "yf": "00646.TW", "exchange": "tse",
+              "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8},
+    "0050":  {"name": "元大台灣50",     "yf": "0050.TW",  "exchange": "tse",
+              "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
+    "00692": {"name": "富邦公司治理",   "yf": "00692.TW", "exchange": "tse",
+              "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
+    "00850": {"name": "元大臺灣ESG永續", "yf": "00850.TW", "exchange": "tse",
+              "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
+    "00662": {"name": "富邦NASDAQ",     "yf": "00662.TW", "exchange": "tse",
+              "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
+    "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse",
+              "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
+}
+
+# 冷卻期天數（交易日）
+COOLDOWN_TRADING_DAYS = 20
 
 def get_twse_realtime() -> dict:
     """從證交所 API 獲取即時大盤與所有追蹤 ETF 的盤中數據"""
@@ -242,8 +259,7 @@ def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float
     return df
 
 def get_historical_and_indicators(symbol: str, config: dict) -> dict:
-    """獲取歷史日 K 線並計算最新的技術指標"""
-    # 獲取最近 2 個月的日K線，確保有足夠的資料算 20 日均線
+    """獲取歷史日 K 線並計算最新的技術指標（供圖表用）"""
     ticker = yf.Ticker(symbol)
     df = ticker.history(period="3mo")
     
@@ -251,17 +267,15 @@ def get_historical_and_indicators(symbol: str, config: dict) -> dict:
         print(f"[YFINANCE ERROR] 無法取得 {symbol} 的歷史數據")
         return {}
         
-    # 計算 KD
+    # 計算日線 KD 與布林（供前端圖表顯示）
     df = calculate_kd(df, period=config["KD_PERIOD"])
-    # 計算布林通道
     df = calculate_bollinger_bands(df, period=config["BOLLINGER_PERIOD"], std_dev=config["BOLLINGER_STD_DEV"])
     
-    # 取得最新的一筆資料
     latest = df.iloc[-1]
     prev = df.iloc[-2] if len(df) > 1 else latest
     
     return {
-        "df": df, # 保留完整 dataframe 供畫圖用
+        "df": df,
         "price": float(latest["Close"]),
         "prev_price": float(prev["Close"]),
         "K": float(latest["K"]),
@@ -271,6 +285,60 @@ def get_historical_and_indicators(symbol: str, config: dict) -> dict:
         "MA": float(latest["MA"]),
         "Upper": float(latest["Upper"]),
         "Lower": float(latest["Lower"])
+    }
+
+def get_weekly_indicators(symbol: str, etf_meta: dict) -> dict:
+    """獲取週線指標（KD、布林、52 週高點）用於進場訊號判斷"""
+    ticker = yf.Ticker(symbol)
+    # 拉取 18 個月日線，確保有足夠資料算 52 週高點與 20 週布林
+    df_daily = ticker.history(period="18mo")
+    
+    if df_daily.empty or len(df_daily) < 20:
+        print(f"[WEEKLY ERROR] 無法取得 {symbol} 足夠的歷史數據")
+        return {}
+    
+    # 計算 52 週（約 252 個交易日）最高價
+    high_52w = float(df_daily['High'].tail(252).max()) if len(df_daily) >= 252 else float(df_daily['High'].max())
+    current_price = float(df_daily.iloc[-1]['Close'])
+    drop_from_high = ((high_52w - current_price) / high_52w) * 100  # 正值=跌幅百分比
+    
+    # 日線轉週線
+    df_weekly = df_daily.resample('W').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }).dropna()
+    
+    if len(df_weekly) < 10:
+        print(f"[WEEKLY ERROR] {symbol} 週線資料不足")
+        return {}
+    
+    # 用分組參數計算週線 KD 和布林
+    kd_limit = etf_meta.get("kd_limit", 20)
+    bb_std = etf_meta.get("bb_std", 2.0)
+    
+    df_weekly = calculate_kd(df_weekly, period=9)  # 9 週 KD
+    df_weekly = calculate_bollinger_bands(df_weekly, period=20, std_dev=bb_std)  # 20 週布林
+    
+    latest = df_weekly.iloc[-1]
+    prev = df_weekly.iloc[-2] if len(df_weekly) > 1 else latest
+    
+    return {
+        "df_weekly": df_weekly,
+        "price": current_price,
+        "weekly_K": float(latest["K"]),
+        "weekly_D": float(latest["D"]),
+        "prev_weekly_K": float(prev["K"]),
+        "prev_weekly_D": float(prev["D"]),
+        "weekly_MA": float(latest["MA"]),
+        "weekly_Upper": float(latest["Upper"]),
+        "weekly_Lower": float(latest["Lower"]),
+        "high_52w": high_52w,
+        "drop_from_high_pct": drop_from_high,
+        "kd_limit": kd_limit,
+        "bb_std": bb_std,
     }
 
 def check_market_drop(current_index: float, yesterday_close: float, state: dict, config: dict) -> dict:
@@ -368,49 +436,114 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         "cumulative_drop": cumulative_drop
     }
 
-def check_etf_signals(symbol: str, name: str, data: dict, state: dict, config: dict) -> list:
-    # 確保 signals_notified 中有該 symbol 的 key
-    if symbol not in state.get("signals_notified", {}):
-        state.setdefault("signals_notified", {})[symbol] = ""
-    """檢查 0050 與 00646 的進場訊號"""
+def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state: dict, config: dict) -> list:
+    """用週線指標檢查 ETF 進場訊號（含冷卻期 + 跌幅分層 + 決策型通知）"""
+    name = etf_meta["name"]
+    group = etf_meta["group"]
+    group_label = GROUP_LABELS.get(group, group)
     today_str = today_taipei().isoformat()
     messages = []
     
-    # 檢查今天是否已經發送過該 ETF 的通知，一天只通知一次，避免盤中震盪重複通知
-    if state["signals_notified"].get(symbol) == today_str:
-        return []
-        
-    price = data["price"]
+    # 確保 signals_notified 中有該 code 的 dict 結構
+    if code not in state.get("signals_notified", {}) or isinstance(state["signals_notified"].get(code), str):
+        state.setdefault("signals_notified", {})[code] = {
+            "last_trigger_date": "",
+            "cooldown_until": "",
+            "trigger_count_this_year": 0
+        }
+    
+    sig_state = state["signals_notified"][code]
+    
+    # 年度重設（每年 1 月 1 日）
+    current_year = str(now_taipei().year)
+    last_trigger = sig_state.get("last_trigger_date", "")
+    if last_trigger and not last_trigger.startswith(current_year):
+        sig_state["trigger_count_this_year"] = 0
+    
+    # 取得週線資料
+    price = weekly_data["price"]
+    kd_limit = weekly_data["kd_limit"]
+    drop_pct = weekly_data["drop_from_high_pct"]
+    high_52w = weekly_data["high_52w"]
+    
     triggered_strategies = []
     
-    # 1. KD 策略：KD 低於 20 且黃金交叉 (K 向上突破 D)
-    # 盤中以當前價格估算的 KD 作為最新點
-    if config["USE_KD_STRATEGY"]:
-        k, d = data["K"], data["D"]
-        prev_k, prev_d = data["prev_K"], data["prev_D"]
+    # 策略 A：週線 KD 低檔黃金交叉
+    if config.get("USE_KD_STRATEGY", True):
+        k = weekly_data["weekly_K"]
+        d = weekly_data["weekly_D"]
+        prev_k = weekly_data["prev_weekly_K"]
+        prev_d = weekly_data["prev_weekly_D"]
         
-        # 黃金交叉定義：前一日 K <= D，且今日 K > D。同時兩者皆處於低檔 (均 < 20)
-        if prev_k <= prev_d and k > d and k < config["KD_LIMIT"] and d < config["KD_LIMIT"]:
-            triggered_strategies.append(f"日K KD低檔黃金交叉 (K:{k:.2f} 突破 D:{d:.2f}，且均小於 {config['KD_LIMIT']})")
-            
-    # 2. 布林通道策略：收盤價低於下軌
-    if config["USE_BOLLINGER_STRATEGY"]:
-        lower_band = data["Lower"]
-        if price < lower_band:
-            triggered_strategies.append(f"價格跌破布林通道下軌 (目前價:{price:.2f} < 下軌:{lower_band:.2f})")
-            
-    if triggered_strategies:
-        strategies_str = "\n- ".join(triggered_strategies)
-        msg = (
-            f"📈【{name} ({symbol}) 進場訊號觸發】\n"
-            f"偵測到符合設定的進場訊號：\n"
-            f"- {strategies_str}\n"
-            f"💲 目前即時價格：{price:.2f}\n"
-            f"📅 觸發時間：{now_taipei().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        messages.append(msg)
-        state["signals_notified"][symbol] = today_str
-        
+        if prev_k <= prev_d and k > d and k < kd_limit and d < kd_limit:
+            triggered_strategies.append(f"週 KD 低檔黃金交叉 (K:{k:.1f} 突破 D:{d:.1f}，門檻 {kd_limit})")
+    
+    # 策略 B：週線跌破布林下軌
+    if config.get("USE_BOLLINGER_STRATEGY", True):
+        lower = weekly_data["weekly_Lower"]
+        if price < lower:
+            triggered_strategies.append(f"週線跌破布林下軌 (價格:{price:.2f} < 下軌:{lower:.2f}，σ={weekly_data['bb_std']})")
+    
+    if not triggered_strategies:
+        return []
+    
+    # 檢查冷卻期
+    in_cooldown = False
+    cooldown_until = sig_state.get("cooldown_until", "")
+    if cooldown_until and today_str <= cooldown_until:
+        in_cooldown = True
+    
+    # 跌幅分層判斷
+    if drop_pct < 10:
+        action = "📋 僅列入觀察，不執行額外加碼（跌幅 < 10%）"
+        tier = 0
+    elif drop_pct < 15:
+        action = "💰 建議執行第 1 層加碼（當月基本扣款 0.5 倍）"
+        tier = 1
+    elif drop_pct < 20:
+        action = "💰💰 建議執行第 2 層加碼（當月基本扣款 1.0 倍）"
+        tier = 2
+    else:
+        action = "💰💰💰 建議執行第 3 層加碼（當月基本扣款 1.5 倍）"
+        tier = 3
+    
+    # 高波動組限制
+    high_vol_note = ""
+    if group == "high_vol" and tier >= 2:
+        high_vol_note = "\n⚠️ 高波動組限制：單次加碼上限為基本扣款 1 倍"
+    
+    # 冷卻期標註
+    if in_cooldown:
+        cooldown_note = f"⏸️ 冷卻期內（至 {cooldown_until}），不建議重複加碼"
+    else:
+        cooldown_note = "✅ 不在冷卻期"
+    
+    strategies_str = " / ".join(triggered_strategies)
+    trigger_count = sig_state.get("trigger_count_this_year", 0) + 1
+    
+    msg = (
+        f"📊【{name} ({code}) — 進場訊號觸發】\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷️ 分組：{group_label}\n"
+        f"🔔 觸發策略：{strategies_str}\n"
+        f"📉 距 52 週高點：-{drop_pct:.1f}%（高點 {high_52w:.2f}）\n"
+        f"⏱️ 冷卻期：{cooldown_note}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💡 {action}{high_vol_note}\n"
+        f"💲 目前價格：{price:.2f}\n"
+        f"📅 本年度第 {trigger_count} 次觸發\n"
+        f"⏰ {now_taipei().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    messages.append(msg)
+    
+    # 更新狀態（不在冷卻期才更新觸發記錄）
+    if not in_cooldown:
+        sig_state["last_trigger_date"] = today_str
+        sig_state["trigger_count_this_year"] = trigger_count
+        # 設定冷卻期：20 個交易日 ≈ 28 天
+        cooldown_end = (now_taipei() + timedelta(days=28)).date().isoformat()
+        sig_state["cooldown_until"] = cooldown_end
+    
     return messages
 
 def run_tracking_cycle() -> dict:
@@ -443,18 +576,28 @@ def run_tracking_cycle() -> dict:
             print(f"[YFINANCE ERROR] 獲取 ^TWII 異常: {e}")
             current_index, yesterday_close = 0.0, 0.0
             
-    # 2. 獲取所有追蹤 ETF 的技術指標
-    etf_indicators = {}
+    # 2. 獲取所有追蹤 ETF 的日線指標（圖表用）和週線指標（訊號用）
+    etf_daily = {}
+    etf_weekly = {}
     for code, meta in ETF_LIST.items():
         try:
+            # 日線（前端圖表）
             info = get_historical_and_indicators(meta["yf"], config)
             if info:
-                # 如果有證交所即時價格，用即時價格更新
                 if code in realtime:
                     info["price"] = realtime[code]["price"]
-                etf_indicators[code] = info
+                etf_daily[code] = info
         except Exception as e:
-            print(f"[TRACKER ERROR] 獲取 {code} ({meta['name']}) 指標失敗: {e}")
+            print(f"[TRACKER ERROR] 獲取 {code} 日線指標失敗: {e}")
+        try:
+            # 週線（進場訊號）
+            weekly = get_weekly_indicators(meta["yf"], meta)
+            if weekly:
+                if code in realtime:
+                    weekly["price"] = realtime[code]["price"]
+                etf_weekly[code] = weekly
+        except Exception as e:
+            print(f"[TRACKER ERROR] 獲取 {code} 週線指標失敗: {e}")
         
     all_notifications = []
     
@@ -478,21 +621,49 @@ def run_tracking_cycle() -> dict:
             "cumulative_drop": 0.0
         }
         
-    # 4. 檢查所有 ETF 進場訊號
+    # 4. 檢查所有 ETF 進場訊號（用週線指標）
     etf_info = {}
     for code, meta in ETF_LIST.items():
-        info = etf_indicators.get(code)
-        if info:
-            sig = check_etf_signals(meta["yf"], meta["name"], info, state, config)
-            all_notifications.extend(sig)
-            etf_info[code] = {
-                "price": info["price"],
-                "K": info["K"],
-                "D": info["D"],
-                "MA": info["MA"],
-                "Lower": info["Lower"],
-                "signal": len(sig) > 0
+        daily = etf_daily.get(code)
+        weekly = etf_weekly.get(code)
+        
+        # 基本卡片資料來自日線
+        if daily:
+            card_data = {
+                "price": daily["price"],
+                "K": daily["K"],
+                "D": daily["D"],
+                "MA": daily["MA"],
+                "Lower": daily["Lower"],
+                "signal": False,
+                "group": meta["group"],
+                "group_label": GROUP_LABELS.get(meta["group"], ""),
             }
+            
+            # 週線資料（補充到卡片）
+            if weekly:
+                card_data.update({
+                    "weekly_K": weekly["weekly_K"],
+                    "weekly_D": weekly["weekly_D"],
+                    "weekly_MA": weekly["weekly_MA"],
+                    "weekly_Lower": weekly["weekly_Lower"],
+                    "high_52w": weekly["high_52w"],
+                    "drop_from_high_pct": weekly["drop_from_high_pct"],
+                })
+                
+                # 檢查冷卻期狀態
+                sig_state = state.get("signals_notified", {}).get(code, {})
+                cooldown_until = sig_state.get("cooldown_until", "") if isinstance(sig_state, dict) else ""
+                card_data["in_cooldown"] = bool(cooldown_until and today_taipei().isoformat() <= cooldown_until)
+                card_data["cooldown_until"] = cooldown_until
+                card_data["trigger_count"] = sig_state.get("trigger_count_this_year", 0) if isinstance(sig_state, dict) else 0
+                
+                # 用週線訊號判斷進場
+                sig = check_etf_signals_weekly(code, meta, weekly, state, config)
+                all_notifications.extend(sig)
+                card_data["signal"] = len(sig) > 0
+            
+            etf_info[code] = card_data
         
     # 5. 發送 LINE 通知
     for msg in all_notifications:
