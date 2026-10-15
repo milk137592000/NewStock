@@ -294,7 +294,7 @@ async function fetchStatus() {
         
         // 渲染所有 ETF 卡片
         const etfInfo = result.etf_info || {};
-        const etfIds = ['0050', '00646', '00692', '00850', '00662', '00830'];
+        const etfIds = ['0050', '00646', '00692', '00850', '00662', '00830', '00878'];
         etfIds.forEach(id => {
             updateEtfCard(id, etfInfo[id], result.state?.yesterday_close);
         });

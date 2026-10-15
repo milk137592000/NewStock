@@ -91,7 +91,7 @@ def load_state() -> dict:
         "wave_notified_drops": [],
         "signals_notified": {
             code: dict(default_signal_state) for code in
-            ["0050", "00646", "00692", "00850", "00662", "00830"]
+            ["0050", "00646", "00692", "00850", "00662", "00830", "00878"]
         },
         "last_biweekly_date": ""
     }
@@ -133,6 +133,8 @@ ETF_LIST = {
               "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
     "00850": {"name": "元大臺灣ESG永續", "yf": "00850.TW", "exchange": "tse",
               "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
+    "00878": {"name": "國泰永續高股息", "yf": "00878.TW", "exchange": "tse",
+              "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8},
     "00662": {"name": "富邦NASDAQ",     "yf": "00662.TW", "exchange": "tse",
               "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
     "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse",

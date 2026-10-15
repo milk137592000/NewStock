@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 <body>
     <div class="app-container">
@@ -204,6 +204,27 @@
                             <div class="signal-badge" id="00830-signal-badge">無訊號</div>
                         </div>
                     </div>
+
+                    <!-- 00878 卡片 -->
+                    <div class="card etf-card" id="card-00878">
+                        <div class="card-header">
+                            <span class="card-tag group-low">低波動組</span>
+                            <i class="fa-solid fa-hand-holding-dollar"></i>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="symbol-name">國泰永續高股息 (00878.TW)</h3>
+                            <div class="price-value" id="00878-price">--.--</div>
+                            <div class="price-change" id="00878-change">--.-- (--.--)</div>
+                        </div>
+                        <div class="card-footer">
+                            <div class="card-stats">
+                                <div class="stat-item"><span class="status-label">日 KD：</span><span class="status-val" id="00878-kd">--</span></div>
+                                <div class="stat-item"><span class="status-label">距52週高：</span><span class="drop-value" id="00878-drop52w">--</span></div>
+                                <div class="stat-item" id="00878-cooldown"></div>
+                            </div>
+                            <div class="signal-badge" id="00878-signal-badge">無訊號</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- 下方區塊：警報狀態與通知歷史 -->
@@ -264,6 +285,7 @@
                     <button class="btn btn-tab" data-chart="00850">元大ESG永續 (00850)</button>
                     <button class="btn btn-tab" data-chart="00662">富邦NASDAQ (00662)</button>
                     <button class="btn btn-tab" data-chart="00830">國泰費城半導體 (00830)</button>
+                    <button class="btn btn-tab" data-chart="00878">國泰永續高股息 (00878)</button>
                 </div>
                 <div class="chart-wrapper card">
                     <div class="chart-header">
@@ -358,6 +380,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>
