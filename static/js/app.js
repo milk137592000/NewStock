@@ -211,6 +211,7 @@ async function fetchStatus() {
         const twiiPrice = document.getElementById('twii-price');
         const twiiChange = document.getElementById('twii-change');
         const twiiTodayDrop = document.getElementById('twii-today-drop');
+        const twiiCumulativeDrop = document.getElementById('twii-cumulative-drop');
         const twiiWaveHigh = document.getElementById('twii-wave-high');
         
         const dropInfo = result.drop_info || {};
@@ -226,7 +227,12 @@ async function fetchStatus() {
             twiiChange.className = `price-change ${diff >= 0 ? 'up' : 'down'}`;
             
             twiiTodayDrop.textContent = `${dropInfo.today_drop.toFixed(2)} 點`;
-            twiiTodayDrop.className = dropInfo.today_drop > 0 ? 'text-danger' : 'text-success'; // 下跌為綠(danger)
+            twiiTodayDrop.className = dropInfo.today_drop > 0 ? 'text-danger' : 'text-success';
+            
+            if (twiiCumulativeDrop && dropInfo.cumulative_drop !== undefined) {
+                twiiCumulativeDrop.textContent = `${dropInfo.cumulative_drop.toFixed(2)} 點`;
+                twiiCumulativeDrop.className = dropInfo.cumulative_drop > 0 ? 'text-danger' : 'text-success';
+            }
         }
         
         if (result.state) {

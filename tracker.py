@@ -342,7 +342,7 @@ def get_weekly_indicators(symbol: str, etf_meta: dict) -> dict:
     }
 
 def check_market_drop(current_index: float, yesterday_close: float, state: dict, config: dict) -> dict:
-    """檢查大盤下跌警報邏輯"""
+    """檢查大盤下跌警報邏輯（含當日下跌與數日波段累積下跌）"""
     today_str = today_taipei().isoformat()
     messages = []
     
@@ -354,13 +354,19 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         # wave_high 如果是 0，則以昨日收盤價初始化
         if state["wave_high"] <= 0:
             state["wave_high"] = yesterday_close
-        # 重設 ETF 進場訊號通知狀態
+        # 重設 ETF 進場訊號通知狀態 (保留 dict 結構)
         for key in state.get("signals_notified", {}):
-            state["signals_notified"][key] = ""
+            if isinstance(state["signals_notified"][key], dict):
+                state["signals_notified"][key]["last_trigger_date"] = ""
+            else:
+                state["signals_notified"][key] = {
+                    "last_trigger_date": "",
+                    "cooldown_until": "",
+                    "trigger_count_this_year": 0
+                }
         print(f"[STATE RESET] 偵測到新的一天 {today_str}。昨收價設為 {yesterday_close}，波段最高點為 {state['wave_high']}")
     
     # 2. 每次執行時，都用 TWSE API 回傳的 yesterday_close 校正 state
-    #    防止因排程時區錯誤或服務重啟，導致 state 中的 yesterday_close 為過期值
     if yesterday_close > 0 and abs(state["yesterday_close"] - yesterday_close) > 1.0:
         print(f"[STATE FIX] 校正 yesterday_close: {state['yesterday_close']:.2f} -> {yesterday_close:.2f} (來自 TWSE API)")
         state["yesterday_close"] = yesterday_close
@@ -370,38 +376,36 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         y_close = yesterday_close
         state["yesterday_close"] = y_close
         
-    # 2. 當日下跌計算
+    # 計算當日下跌與跌幅
     today_drop = y_close - current_index
-    drop_threshold = config["DROP_THRESHOLD"]
-    drop_step = config["DROP_STEP"]
+    today_drop_pct = (today_drop / y_close * 100) if y_close > 0 else 0.0
+    drop_threshold = config["DROP_THRESHOLD"]  # 預設 500 點
+    drop_step = config["DROP_STEP"]            # 預設 100 點
     
-    # 檢查是否達到當日下跌 500 點門檻
+    # 當日下跌字串標註
+    if today_drop > 0:
+        today_drop_desc = f"{today_drop:.2f} 點 (-{today_drop_pct:.2f}%)"
+        if today_drop >= drop_threshold:
+            today_drop_desc += f" (⚠️ 已超過 {int(drop_threshold)} 點門檻！)"
+    else:
+        today_drop_desc = f"+{abs(today_drop):.2f} 點 (+{abs(today_drop_pct):.2f}%)"
+
+    # 檢查是否達到當日下跌 500 點門檻（及後續每 100 點階層）
+    today_triggered = False
+    today_max_level = 0
     if today_drop >= drop_threshold:
-        # 計算目前應該觸發的階層 (例如：500, 600, 700...)
         current_level = int(drop_threshold + ((today_drop - drop_threshold) // drop_step) * drop_step)
-        
-        # 檢查該階層是否已經通知過
         if current_level not in state["today_notified_drops"]:
-            # 將比 current_level 小但沒發過的一併補上，避免跳空大跌漏發
             levels_to_notify = []
             for lv in range(int(drop_threshold), current_level + 1, int(drop_step)):
                 if lv not in state["today_notified_drops"]:
                     levels_to_notify.append(lv)
                     state["today_notified_drops"].append(lv)
-            
             if levels_to_notify:
-                max_level = max(levels_to_notify)
-                msg = (
-                    f"⚠️【大盤今日暴跌警報】\n"
-                    f"台股大盤今日跌幅已擴大！\n"
-                    f"📉 今日下跌點數：{today_drop:.2f} 點 (已突破 {max_level} 點關卡)\n"
-                    f"📊 當前大盤指數：{current_index:.2f}\n"
-                    f"↩️ 昨日收盤指數：{y_close:.2f}"
-                )
-                messages.append(msg)
+                today_triggered = True
+                today_max_level = max(levels_to_notify)
                 
-    # 3. 波段累積下跌計算 (波段最高點 - 目前價)
-    # 如果目前指數高於波段最高點，則更新波段最高點，並重設波段通知狀態
+    # 波段累積下跌計算 (波段最高點 - 目前價)
     if current_index > state["wave_high"]:
         state["wave_high"] = current_index
         state["wave_notified_drops"] = []
@@ -409,7 +413,10 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         
     wave_high = state["wave_high"]
     cumulative_drop = wave_high - current_index
+    cumulative_drop_pct = (cumulative_drop / wave_high * 100) if wave_high > 0 else 0.0
     
+    wave_triggered = False
+    wave_max_level = 0
     if cumulative_drop >= drop_threshold:
         current_wave_level = int(drop_threshold + ((cumulative_drop - drop_threshold) // drop_step) * drop_step)
         if current_wave_level not in state["wave_notified_drops"]:
@@ -418,17 +425,57 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
                 if lv not in state["wave_notified_drops"]:
                     levels_to_notify.append(lv)
                     state["wave_notified_drops"].append(lv)
-            
             if levels_to_notify:
-                max_level = max(levels_to_notify)
-                msg = (
-                    f"🚨【大盤波段累積下跌警報】\n"
-                    f"台股大盤波段累積跌幅已達警戒！\n"
-                    f"📉 累積下跌點數：{cumulative_drop:.2f} 點 (已突破 {max_level} 點關卡)\n"
-                    f"📊 當前大盤指數：{current_index:.2f}\n"
-                    f"🏔️ 波段最高指數：{wave_high:.2f}"
-                )
-                messages.append(msg)
+                wave_triggered = True
+                wave_max_level = max(levels_to_notify)
+                
+    # 組合通知訊息：確保每一則警報都同時包含「當日下跌點數」與「數日累積下跌」
+    time_str = now_taipei().strftime('%Y-%m-%d %H:%M:%S')
+    
+    if today_triggered and wave_triggered:
+        # 同一輪巡檢中，當日下跌與波段累積同時突破關卡：發送整合重大警報
+        msg = (
+            f"🚨⚠️【大盤重大警報：當日暴跌 ＆ 波段累積擴大】\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📉 當日下跌點數：{today_drop:.2f} 點 (已突破 {today_max_level} 點關卡，-{today_drop_pct:.2f}%)\n"
+            f"📉 數日累積下跌：{cumulative_drop:.2f} 點 (已突破 {wave_max_level} 點關卡，-{cumulative_drop_pct:.2f}%)\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📊 當前大盤指數：{current_index:.2f}\n"
+            f"↩️ 昨日收盤指數：{y_close:.2f}\n"
+            f"🏔️ 波段最高指數：{wave_high:.2f}\n"
+            f"⏰ 觸發時間：{time_str}"
+        )
+        messages.append(msg)
+    elif today_triggered:
+        # 當日下跌突破 500 點關卡
+        msg = (
+            f"⚠️【大盤當日下跌警報 (破{int(drop_threshold)}點)】\n"
+            f"台股大盤今日跌幅擴大，已達警戒關卡！\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📉 當日下跌點數：{today_drop:.2f} 點 (已突破 {today_max_level} 點關卡，-{today_drop_pct:.2f}%)\n"
+            f"📉 數日累積下跌：{cumulative_drop:.2f} 點 (距波段高點 -{cumulative_drop_pct:.2f}%)\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📊 當前大盤指數：{current_index:.2f}\n"
+            f"↩️ 昨日收盤指數：{y_close:.2f}\n"
+            f"🏔️ 波段最高指數：{wave_high:.2f}\n"
+            f"⏰ 觸發時間：{time_str}"
+        )
+        messages.append(msg)
+    elif wave_triggered:
+        # 數日波段累積突破關卡，訊息中也務必清楚顯示「當日下跌點數」
+        msg = (
+            f"🚨【大盤波段累積下跌警報】\n"
+            f"台股大盤波段累積跌幅已達警戒！\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📉 數日累積下跌：{cumulative_drop:.2f} 點 (已突破 {wave_max_level} 點關卡，-{cumulative_drop_pct:.2f}%)\n"
+            f"📉 當日下跌點數：{today_drop_desc}\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📊 當前大盤指數：{current_index:.2f}\n"
+            f"↩️ 昨日收盤指數：{y_close:.2f}\n"
+            f"🏔️ 波段最高指數：{wave_high:.2f}\n"
+            f"⏰ 觸發時間：{time_str}"
+        )
+        messages.append(msg)
                 
     return {
         "messages": messages,
