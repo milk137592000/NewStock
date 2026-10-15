@@ -92,7 +92,8 @@ def load_state() -> dict:
         "signals_notified": {
             code: dict(default_signal_state) for code in
             ["0050", "00646", "00692", "00850", "00662", "00830"]
-        }
+        },
+        "last_biweekly_date": ""
     }
     if os.path.exists(STATE_FILE):
         try:
@@ -136,6 +137,15 @@ ETF_LIST = {
               "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
     "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse",
               "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
+}
+
+# 長線定期觀察與推薦候選池（非高股息、市值與全球核心潛力標的）
+WATCHLIST_ETF = {
+    "00757": {"name": "統一FANG+",       "yf": "00757.TW", "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "美股十大科技巨頭"},
+    "00924": {"name": "復華S&P500成長", "yf": "00924.TW", "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "美股成長龍頭"},
+    "00645": {"name": "富邦日本",       "yf": "00645.TW", "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "日本東證核心"},
+    "0051":  {"name": "元大中型100",    "yf": "0051.TW",  "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "台股中型成長爆發"},
+    "00762": {"name": "元大全球AI",     "yf": "00762.TW", "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "全球AI軟硬體龍頭"},
 }
 
 # 冷卻期天數（交易日）
@@ -725,4 +735,139 @@ def run_tracking_cycle() -> dict:
         "etf_info": etf_info,
         "notified_messages": all_notifications,
         "state": state
+    }
+
+def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
+    """每兩週執行一次的長線 ETF 健康度與買進評估"""
+    state = load_state()
+    today_dt = today_taipei()
+    today_str = today_dt.isoformat()
+    
+    last_date_str = state.get("last_biweekly_date", "")
+    if not force and last_date_str:
+        try:
+            last_date = date.fromisoformat(last_date_str)
+            if (today_dt - last_date).days < 14:
+                print(f"[BIWEEKLY] 距離上次雙週分析（{last_date_str}）未滿 14 天，跳過執行。")
+                return {"status": "skipped", "message": f"未滿 14 天 (上次: {last_date_str})"}
+        except Exception as e:
+            print(f"[BIWEEKLY ERROR] 日期解析失敗: {e}")
+            
+    print(f"\n[BIWEEKLY] 開始執行長線標的雙週分析：{today_str}")
+    
+    # 合併現有主力 ETF 與觀察池 ETF
+    all_targets = {}
+    for code, meta in ETF_LIST.items():
+        all_targets[code] = {**meta, "type": "現有持股"}
+    for code, meta in WATCHLIST_ETF.items():
+        all_targets[code] = {**meta, "type": "觀察候選"}
+        
+    analysis_results = []
+    
+    for code, meta in all_targets.items():
+        try:
+            weekly = get_weekly_indicators(meta["yf"], meta)
+            if not weekly:
+                continue
+                
+            drop_pct = weekly["drop_from_high_pct"]
+            price = weekly["price"]
+            weekly_k = weekly["weekly_K"]
+            weekly_d = weekly["weekly_D"]
+            high_52w = weekly["high_52w"]
+            kd_limit = meta.get("kd_limit", 20)
+            group = meta.get("group", "mid_vol")
+            group_label = GROUP_LABELS.get(group, group)
+            
+            # 長線加碼性價比評分 (Value Score)
+            if drop_pct >= 20:
+                tier_label = "🔥 深度特價 (第 3 層加碼區)"
+                score = 95
+            elif drop_pct >= 15:
+                tier_label = "⚡ 大幅特價 (第 2 層加碼區)"
+                score = 85
+            elif drop_pct >= 10:
+                tier_label = "✨ 初步回檔 (第 1 層加碼區)"
+                score = 75
+            else:
+                tier_label = "🌱 正常水位 (維持定期定額)"
+                score = 60
+                
+            # 若週 KD 處於低檔超賣區，加分
+            kd_oversold = weekly_k < kd_limit and weekly_d < kd_limit
+            if kd_oversold:
+                score += 5
+                
+            analysis_results.append({
+                "code": code,
+                "name": meta["name"],
+                "type": meta["type"],
+                "group": group,
+                "group_label": group_label,
+                "price": price,
+                "high_52w": high_52w,
+                "drop_pct": drop_pct,
+                "weekly_k": weekly_k,
+                "weekly_d": weekly_d,
+                "kd_oversold": kd_oversold,
+                "tier_label": tier_label,
+                "score": score,
+                "theme": meta.get("theme", meta["name"])
+            })
+        except Exception as e:
+            print(f"[BIWEEKLY ERROR] 分析 {code} 失敗: {e}")
+            
+    # 依照評分與回檔幅度排序
+    analysis_results.sort(key=lambda x: (x["score"], x["drop_pct"]), reverse=True)
+    
+    # 挑選 Top 3
+    top3 = analysis_results[:3]
+    top3_lines = []
+    for i, item in enumerate(top3, 1):
+        top3_lines.append(f"{i}. {item['code']} {item['name']} (距高點 -{item['drop_pct']:.1f}%)\n   👉 {item['tier_label']}")
+    top3_text = "\n".join(top3_lines) if top3_lines else "無"
+    
+    # 分組清單彙整
+    grouped_lines = []
+    for grp_key, grp_title in [("low_vol", "低波動組（美股大盤）"), ("mid_vol", "中波動組（台美核心/日本）"), ("high_vol", "高波動衛星組（科技/半導體/FANG+）")]:
+        items = [x for x in analysis_results if x["group"] == grp_key]
+        if items:
+            grouped_lines.append(f"【{grp_title}】")
+            for it in items:
+                status_icon = "🟢" if it["drop_pct"] < 10 else ("🟡" if it["drop_pct"] < 15 else "🔴")
+                tag = f"[{it['type']}]" if it['type'] == '觀察候選' else ""
+                grouped_lines.append(f"{status_icon} {it['code']} {it['name']}{tag}：{it['price']:.2f}元 (距高點 -{it['drop_pct']:.1f}%)")
+    grouped_text = "\n".join(grouped_lines)
+    
+    # 組合 LINE 雙週報推播訊息
+    msg = (
+        f"🗓️【長線 ETF 投資雙週報】\n"
+        f"長線長期持有標的健康度與回檔評估\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🌟 本期逢低加碼關注 Top 3：\n"
+        f"{top3_text}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📊 全標的長線位階概覽：\n"
+        f"{grouped_text}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💡 雙週配置心法：\n"
+        f"1. 定期定額基本部位不停扣。\n"
+        f"2. 科技/半導體衛星組不超過總資產 30%。\n"
+        f"3. 距高點跌幅未達 10% 僅觀察，不隨意消耗加碼桶子彈。\n"
+        f"⏰ 出刊日期：{today_str}"
+    )
+    
+    if send_line:
+        send_line_message(msg)
+        
+    # 更新 state
+    state["last_biweekly_date"] = today_str
+    save_state(state)
+    
+    return {
+        "status": "success",
+        "date": today_str,
+        "top3": top3,
+        "results": analysis_results,
+        "message": msg
     }

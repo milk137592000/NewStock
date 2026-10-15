@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
-from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST, GROUP_LABELS
+from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST, GROUP_LABELS, run_biweekly_etf_analysis, WATCHLIST_ETF
 from scheduler import start_scheduler, shutdown_scheduler
 
 # 設定日誌
@@ -245,6 +245,24 @@ async def get_chart_data(symbol: str):
         return {"success": True, "symbol": symbol, "data": chart_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"讀取圖表數據失敗: {e}")
+
+@app.get("/api/analysis/biweekly")
+def get_biweekly_analysis():
+    """獲取長線 ETF 雙週分析資料（不發送 LINE）"""
+    try:
+        res = run_biweekly_etf_analysis(force=True, send_line=False)
+        return {"success": True, "data": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"執行雙週分析失敗: {e}")
+
+@app.post("/api/analysis/biweekly/trigger")
+def trigger_biweekly_analysis():
+    """手動觸發長線 ETF 雙週分析並發送 LINE 推播"""
+    try:
+        res = run_biweekly_etf_analysis(force=True, send_line=True)
+        return {"success": True, "data": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"觸發雙週分析失敗: {e}")
 
 if __name__ == "__main__":
     import uvicorn

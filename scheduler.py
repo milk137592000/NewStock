@@ -1,7 +1,7 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from tracker import run_tracking_cycle
+from tracker import run_tracking_cycle, run_biweekly_etf_analysis
 import requests
 import os
 import logging
@@ -75,7 +75,21 @@ def start_scheduler():
             replace_existing=True
         )
         
-        # 4. Keep-Alive 防休眠排程：每 10 分鐘 Ping 自己一次，全天候運作
+        # 4. 長線標的雙週分析推播排程：每週五 15:30 (台北時間) 檢查並在滿 14 天時出刊
+        scheduler.add_job(
+            func=run_biweekly_etf_analysis,
+            trigger=CronTrigger(
+                day_of_week="fri",
+                hour=15,
+                minute=30,
+                timezone=TZ_TAIPEI
+            ),
+            id="biweekly_analysis_job",
+            name="長線標的雙週分析與推播",
+            replace_existing=True
+        )
+        
+        # 5. Keep-Alive 防休眠排程：每 10 分鐘 Ping 自己一次，全天候運作
         scheduler.add_job(
             func=keep_alive,
             trigger=IntervalTrigger(minutes=10),

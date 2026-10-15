@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=4">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
 </head>
 <body>
     <div class="app-container">
@@ -26,6 +26,7 @@
             </div>
             <nav class="nav-menu">
                 <a href="#" class="nav-item active" data-tab="dashboard"><i class="fa-solid fa-chart-pie"></i><span>儀表板</span></a>
+                <a href="#" class="nav-item" data-tab="biweekly"><i class="fa-solid fa-gem"></i><span>長線雙週精選</span></a>
                 <a href="#" class="nav-item" data-tab="charts"><i class="fa-solid fa-chart-area"></i><span>技術圖表</span></a>
                 <a href="#" class="nav-item" data-tab="settings"><i class="fa-solid fa-sliders"></i><span>通知設定</span></a>
             </nav>
@@ -238,6 +239,21 @@
                 </div>
             </section>
 
+            <!-- 頁籤：長線標的雙週精選 -->
+            <section id="tab-biweekly" class="tab-content">
+                <div class="biweekly-header-bar">
+                    <div class="biweekly-info">
+                        <h2><i class="fa-solid fa-gem text-warning"></i> 長線長期持有標的・雙週評估池</h2>
+                        <p>專注於非高股息、市值型與全球核心潛力 ETF。每兩週自動更新健康度與回檔位階，嚴守紀律逢低佈局。</p>
+                    </div>
+                    <button id="btn-trigger-biweekly" class="btn btn-primary"><i class="fa-brands fa-line"></i> 立即推送雙週分析至 LINE</button>
+                </div>
+                
+                <div id="biweekly-content">
+                    <div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i> 載入長線雙週分析數據中...</div>
+                </div>
+            </section>
+
             <!-- 頁籤二：技術圖表 -->
             <section id="tab-charts" class="tab-content">
                 <div class="chart-selector">
@@ -342,6 +358,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/js/app.js?v=4"></script>
+    <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

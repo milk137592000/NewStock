@@ -45,6 +45,9 @@ function initNavigation() {
             if (tabId === 'dashboard') {
                 pageTitle.textContent = '即時監控儀表板';
                 fetchStatus(); // 切回首頁時順便刷一下
+            } else if (tabId === 'biweekly') {
+                pageTitle.textContent = '長線標的雙週精選池';
+                loadBiweeklyData();
             } else if (tabId === 'charts') {
                 pageTitle.textContent = '技術分析圖表';
                 loadChartData(activeChartSymbol);
@@ -171,6 +174,31 @@ function initEventListeners() {
             btn.innerHTML = '<i class="fa-brands fa-line"></i> 發送測試通知';
         }
     });
+
+    // 觸發雙週長線分析推播按鈕
+    const btnBiweekly = document.getElementById('btn-trigger-biweekly');
+    if (btnBiweekly) {
+        btnBiweekly.addEventListener('click', async () => {
+            btnBiweekly.disabled = true;
+            btnBiweekly.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在分析並推播中...';
+            try {
+                const res = await fetch('/api/analysis/biweekly/trigger', { method: 'POST' });
+                const json = await res.json();
+                if (json.success) {
+                    showNotification('長線標的雙週分析已成功產出並推播至 LINE！', 'success');
+                    renderBiweeklyContent(json.data);
+                } else {
+                    showNotification('推播失敗: ' + (json.detail || '未知錯誤'), 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                showNotification('連線 API 異常。', 'error');
+            } finally {
+                btnBiweekly.disabled = false;
+                btnBiweekly.innerHTML = '<i class="fa-brands fa-line"></i> 立即推送雙週分析至 LINE';
+            }
+        });
+    }
 }
 
 // 3. 獲取並呈現設定值
@@ -581,4 +609,105 @@ function showNotification(msg, type = 'success') {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 400);
     }, 3000);
+}
+
+// 7. 長線標的雙週分析資料獲取與渲染
+async function loadBiweeklyData() {
+    const container = document.getElementById('biweekly-content');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i> 載入長線雙週分析數據中...</div>';
+    
+    try {
+        const res = await fetch('/api/analysis/biweekly');
+        const json = await res.json();
+        if (json.success && json.data) {
+            renderBiweeklyContent(json.data);
+        } else {
+            container.innerHTML = `<div class="error-state">載入失敗: ${json.detail || '無法取得分析數據'}</div>`;
+        }
+    } catch (err) {
+        console.error('載入雙週分析失敗:', err);
+        container.innerHTML = '<div class="error-state">連線異常，請稍後重試。</div>';
+    }
+}
+
+function renderBiweeklyContent(data) {
+    const container = document.getElementById('biweekly-content');
+    if (!container) return;
+    
+    const results = data.results || [];
+    const top3 = data.top3 || [];
+    
+    // Top 3 推薦卡片 HTML
+    let top3Html = '';
+    top3.forEach((item, idx) => {
+        const rank = idx + 1;
+        const dropClass = item.drop_pct >= 20 ? 'drop-severe' : (item.drop_pct >= 15 ? 'drop-high' : (item.drop_pct >= 10 ? 'drop-mid' : 'drop-low'));
+        top3Html += `
+            <div class="top3-card rank-${rank}">
+                <div class="top3-rank-badge">NO.${rank} 首選</div>
+                <div class="top3-name">${item.name} (${item.code})</div>
+                <div class="top3-theme"><i class="fa-solid fa-tag"></i> ${item.theme}</div>
+                <div class="top3-tier">${item.tier_label}</div>
+                <div class="top3-metrics">
+                    <span>市價: <b>${item.price.toFixed(2)}</b></span>
+                    <span>距52週高: <b class="${dropClass}">-${item.drop_pct.toFixed(1)}%</b></span>
+                    <span>週KD: <b>${item.weekly_k.toFixed(1)}/${item.weekly_d.toFixed(1)}</b></span>
+                </div>
+            </div>
+        `;
+    });
+    
+    // 全清單表格 HTML
+    let tableRows = '';
+    results.forEach(item => {
+        const dropClass = item.drop_pct >= 20 ? 'drop-severe' : (item.drop_pct >= 15 ? 'drop-high' : (item.drop_pct >= 10 ? 'drop-mid' : 'drop-low'));
+        const typeBadge = item.type === '觀察候選' 
+            ? '<span class="card-tag group-low">觀察候選</span>' 
+            : '<span class="card-tag group-mid">現有核心</span>';
+        
+        tableRows += `
+            <tr>
+                <td><b>${item.code}</b></td>
+                <td>${item.name}</td>
+                <td>${typeBadge}</td>
+                <td>${item.group_label}</td>
+                <td>$${item.price.toFixed(2)}</td>
+                <td>$${item.high_52w.toFixed(2)}</td>
+                <td class="${dropClass}"><b>-${item.drop_pct.toFixed(1)}%</b></td>
+                <td>${item.weekly_k.toFixed(1)} / ${item.weekly_d.toFixed(1)}</td>
+                <td>${item.tier_label}</td>
+            </tr>
+        `;
+    });
+    
+    container.innerHTML = `
+        <h3 class="biweekly-section-title"><i class="fa-solid fa-fire text-danger"></i> 本期逢低加碼重點推薦 Top 3</h3>
+        <div class="biweekly-top3-grid">
+            ${top3Html}
+        </div>
+        
+        <h3 class="biweekly-section-title"><i class="fa-solid fa-list-check text-info"></i> 全部長期持有與候選標的健康度概覽 (${results.length} 檔)</h3>
+        <div class="biweekly-table-container">
+            <table class="biweekly-table">
+                <thead>
+                    <tr>
+                        <th>代號</th>
+                        <th>標的名稱</th>
+                        <th>屬性</th>
+                        <th>配置分組</th>
+                        <th>目前市價</th>
+                        <th>52週高點</th>
+                        <th>距高點跌幅</th>
+                        <th>週 KD (9W)</th>
+                        <th>加碼建議位階</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+            </table>
+        </div>
+    `;
 }
