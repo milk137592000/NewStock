@@ -62,7 +62,8 @@ async def startup_event():
     # 啟動時先跑一次以更新快取
     global last_fetch_time, cached_data
     try:
-        cached_data = run_tracking_cycle()
+        # 啟動時先跑一次以更新快取（靜音模式，避免重啟時誤發通知）
+        cached_data = run_tracking_cycle(send_notifications=False)
         last_fetch_time = now_taipei()
     except Exception as e:
         logger.error(f"啟動時初始化數據失敗: {e}")

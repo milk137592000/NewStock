@@ -37,8 +37,37 @@ def get_env_config():
         "BOLLINGER_STD_DEV": float(os.getenv("BOLLINGER_STD_DEV", 2.0))
     }
 
-def send_line_message(message: str) -> bool:
-    """透過 LINE Messaging API 發送 Push Message"""
+def is_tw_stock_market_hours() -> bool:
+    """判斷目前台北時間是否為台股交易時段（週一至週五 09:00 ~ 13:35，以及 14:00 盤後收盤確認）"""
+    now = now_taipei()
+    # 週六(5)、週日(6)休市
+    if now.weekday() >= 5:
+        return False
+    t = (now.hour, now.minute)
+    # 盤中交易：09:00 ~ 13:35
+    if (9, 0) <= t <= (13, 35):
+        return True
+    # 盤後收盤確認：14:00 ~ 14:05
+    if (14, 0) <= t <= (14, 5):
+        return True
+    return False
+
+def is_night_quiet_hours() -> bool:
+    """判斷目前是否為夜間免打擾時段（22:30 ~ 隔日 08:30），保障使用者睡眠品質"""
+    now = now_taipei()
+    t = (now.hour, now.minute)
+    # 22:30 之後 或 08:30 之前
+    if t >= (22, 30) or t < (8, 30):
+        return True
+    return False
+
+def send_line_message(message: str, force: bool = False) -> bool:
+    """透過 LINE Messaging API 發送 Push Message（含夜間免打擾保護）"""
+    # 若在夜間免打擾時段且非強制（非手動發送），自動靜音
+    if is_night_quiet_hours() and not force:
+        print(f"[LINE QUIET] 目前為夜間免打擾時段 ({now_taipei().strftime('%H:%M')})，靜音略過發送: {message[:30]}...")
+        return False
+
     config = get_env_config()
     token = config["LINE_CHANNEL_ACCESS_TOKEN"]
     user_id = config["LINE_USER_ID"]
@@ -358,7 +387,22 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
     today_str = today_taipei().isoformat()
     messages = []
     
-    # 1. 跨日檢查與狀態重設
+    # 計算當日下跌與跌幅（供回傳與前端呈現）
+    y_close = state.get("yesterday_close", yesterday_close)
+    if y_close <= 0:
+        y_close = yesterday_close
+    today_drop = y_close - current_index if y_close > 0 else 0.0
+    cumulative_drop = state.get("wave_high", current_index) - current_index
+
+    # 關鍵防護 1：若非台股交易時間（休市、夜間、清晨、週末），嚴格禁止觸發任何大盤跌幅警報
+    if not is_tw_stock_market_hours():
+        return {
+            "messages": [],
+            "today_drop": today_drop,
+            "cumulative_drop": cumulative_drop
+        }
+    
+    # 關鍵防護 2：跨日檢查與狀態重設只在台股交易日開盤時生效，防止半夜拿前一日殘留數據誤判
     if state["date"] != today_str:
         state["date"] = today_str
         state["yesterday_close"] = yesterday_close
@@ -376,7 +420,7 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
                     "cooldown_until": "",
                     "trigger_count_this_year": 0
                 }
-        print(f"[STATE RESET] 偵測到新的一天 {today_str}。昨收價設為 {yesterday_close}，波段最高點為 {state['wave_high']}")
+        print(f"[STATE RESET] 台股開盤跨日重設 {today_str}。昨收價設為 {yesterday_close}，波段最高點為 {state['wave_high']}")
     
     # 2. 每次執行時，都用 TWSE API 回傳的 yesterday_close 校正 state
     if yesterday_close > 0 and abs(state["yesterday_close"] - yesterday_close) > 1.0:
@@ -605,9 +649,9 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
     
     return messages
 
-def run_tracking_cycle() -> dict:
+def run_tracking_cycle(send_notifications: bool = True) -> dict:
     """執行一次完整的監控與分析循環"""
-    print(f"\n[TRACKER] 開始執行監控循環：{now_taipei().isoformat()}")
+    print(f"\n[TRACKER] 開始執行監控循環（通知={send_notifications}）：{now_taipei().isoformat()}")
     config = get_env_config()
     state = load_state()
     
@@ -725,8 +769,12 @@ def run_tracking_cycle() -> dict:
             etf_info[code] = card_data
         
     # 5. 發送 LINE 通知
-    for msg in all_notifications:
-        send_line_message(msg)
+    if send_notifications:
+        for msg in all_notifications:
+            send_line_message(msg)
+    else:
+        if all_notifications:
+            print(f"[TRACKER] 靜音模式，略過發送 {len(all_notifications)} 則通知。")
         
     # 儲存狀態
     save_state(state)
