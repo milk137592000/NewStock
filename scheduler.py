@@ -75,17 +75,17 @@ def start_scheduler():
             replace_existing=True
         )
         
-        # 4. 長線標的雙週分析推播排程：每週五 15:30 (台北時間) 檢查並在滿 14 天時出刊
+        # 4. 長線標的每日精選推播排程：週一至週五 14:30 (台北時間，盤後) 每日執行一次
         scheduler.add_job(
             func=run_biweekly_etf_analysis,
             trigger=CronTrigger(
-                day_of_week="fri",
-                hour=15,
+                day_of_week="mon-fri",
+                hour=14,
                 minute=30,
                 timezone=TZ_TAIPEI
             ),
-            id="biweekly_analysis_job",
-            name="長線標的雙週分析與推播",
+            id="daily_analysis_job",
+            name="長線標的每日精選分析與推播",
             replace_existing=True
         )
         

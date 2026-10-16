@@ -787,23 +787,18 @@ def run_tracking_cycle(send_notifications: bool = True) -> dict:
         "state": state
     }
 
-def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
-    """每兩週執行一次的長線 ETF 健康度與買進評估"""
+def run_daily_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
+    """每個交易日執行一次的長線 ETF 每日精選與買進評估"""
     state = load_state()
     today_dt = today_taipei()
     today_str = today_dt.isoformat()
     
-    last_date_str = state.get("last_biweekly_date", "")
-    if not force and last_date_str:
-        try:
-            last_date = date.fromisoformat(last_date_str)
-            if (today_dt - last_date).days < 14:
-                print(f"[BIWEEKLY] 距離上次雙週分析（{last_date_str}）未滿 14 天，跳過執行。")
-                return {"status": "skipped", "message": f"未滿 14 天 (上次: {last_date_str})"}
-        except Exception as e:
-            print(f"[BIWEEKLY ERROR] 日期解析失敗: {e}")
+    last_date_str = state.get("last_daily_date", "")
+    if not force and last_date_str == today_str:
+        print(f"[DAILY PICK] 今日（{today_str}）已執行過每日精選分析，跳過執行。")
+        return {"status": "skipped", "message": f"今日已執行過 ({today_str})"}
             
-    print(f"\n[BIWEEKLY] 開始執行長線標的雙週分析：{today_str}")
+    print(f"\n[DAILY PICK] 開始執行長線標的每日精選分析：{today_str}")
     
     # 合併現有主力 ETF 與觀察池 ETF
     all_targets = {}
@@ -865,7 +860,7 @@ def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> di
                 "theme": meta.get("theme", meta["name"])
             })
         except Exception as e:
-            print(f"[BIWEEKLY ERROR] 分析 {code} 失敗: {e}")
+            print(f"[DAILY PICK ERROR] 分析 {code} 失敗: {e}")
             
     # 依照評分與回檔幅度排序
     analysis_results.sort(key=lambda x: (x["score"], x["drop_pct"]), reverse=True)
@@ -879,7 +874,7 @@ def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> di
     
     # 分組清單彙整
     grouped_lines = []
-    for grp_key, grp_title in [("low_vol", "低波動組（美股大盤）"), ("mid_vol", "中波動組（台美核心/日本）"), ("high_vol", "高波動衛星組（科技/半導體/FANG+）")]:
+    for grp_key, grp_title in [("low_vol", "低波動組（美股大盤/高息）"), ("mid_vol", "中波動組（台美核心/日本）"), ("high_vol", "高波動衛星組（科技/半導體/FANG+）")]:
         items = [x for x in analysis_results if x["group"] == grp_key]
         if items:
             grouped_lines.append(f"【{grp_title}】")
@@ -889,28 +884,29 @@ def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> di
                 grouped_lines.append(f"{status_icon} {it['code']} {it['name']}{tag}：{it['price']:.2f}元 (距高點 -{it['drop_pct']:.1f}%)")
     grouped_text = "\n".join(grouped_lines)
     
-    # 組合 LINE 雙週報推播訊息
+    # 組合 LINE 每日精選推播訊息
     msg = (
-        f"🗓️【長線 ETF 投資雙週報】\n"
-        f"長線長期持有標的健康度與回檔評估\n"
+        f"🗓️【長線 ETF 投資・每日精選】\n"
+        f"每日盤後長期持有標的健康度與回檔推薦評估\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🌟 本期逢低加碼關注 Top 3：\n"
+        f"🌟 今日逢低加碼推薦 Top 3：\n"
         f"{top3_text}\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"📊 全標的長線位階概覽：\n"
         f"{grouped_text}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"💡 雙週配置心法：\n"
+        f"💡 長期配置心法：\n"
         f"1. 定期定額基本部位不停扣。\n"
         f"2. 科技/半導體衛星組不超過總資產 30%。\n"
         f"3. 距高點跌幅未達 10% 僅觀察，不隨意消耗加碼桶子彈。\n"
-        f"⏰ 出刊日期：{today_str}"
+        f"⏰ 評估日期：{today_str}"
     )
     
     if send_line:
         send_line_message(msg)
         
     # 更新 state
+    state["last_daily_date"] = today_str
     state["last_biweekly_date"] = today_str
     save_state(state)
     
@@ -921,3 +917,6 @@ def run_biweekly_etf_analysis(force: bool = False, send_line: bool = True) -> di
         "results": analysis_results,
         "message": msg
     }
+
+# 相容舊名稱呼叫
+run_biweekly_etf_analysis = run_daily_etf_analysis

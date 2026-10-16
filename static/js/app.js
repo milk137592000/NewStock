@@ -46,7 +46,7 @@ function initNavigation() {
                 pageTitle.textContent = '即時監控儀表板';
                 fetchStatus(); // 切回首頁時順便刷一下
             } else if (tabId === 'biweekly') {
-                pageTitle.textContent = '長線標的雙週精選池';
+                pageTitle.textContent = '長線標的每日精選池';
                 loadBiweeklyData();
             } else if (tabId === 'charts') {
                 pageTitle.textContent = '技術分析圖表';
@@ -175,7 +175,7 @@ function initEventListeners() {
         }
     });
 
-    // 觸發雙週長線分析推播按鈕
+    // 觸發每日精選長線分析推播按鈕
     const btnBiweekly = document.getElementById('btn-trigger-biweekly');
     if (btnBiweekly) {
         btnBiweekly.addEventListener('click', async () => {
@@ -185,7 +185,7 @@ function initEventListeners() {
                 const res = await fetch('/api/analysis/biweekly/trigger', { method: 'POST' });
                 const json = await res.json();
                 if (json.success) {
-                    showNotification('長線標的雙週分析已成功產出並推播至 LINE！', 'success');
+                    showNotification('長線標的每日精選分析已成功產出並推播至 LINE！', 'success');
                     renderBiweeklyContent(json.data);
                 } else {
                     showNotification('推播失敗: ' + (json.detail || '未知錯誤'), 'error');
@@ -195,7 +195,7 @@ function initEventListeners() {
                 showNotification('連線 API 異常。', 'error');
             } finally {
                 btnBiweekly.disabled = false;
-                btnBiweekly.innerHTML = '<i class="fa-brands fa-line"></i> 立即推送雙週分析至 LINE';
+                btnBiweekly.innerHTML = '<i class="fa-brands fa-line"></i> 立即推送每日精選至 LINE';
             }
         });
     }
@@ -683,7 +683,7 @@ function renderBiweeklyContent(data) {
     });
     
     container.innerHTML = `
-        <h3 class="biweekly-section-title"><i class="fa-solid fa-fire text-danger"></i> 本期逢低加碼重點推薦 Top 3</h3>
+        <h3 class="biweekly-section-title"><i class="fa-solid fa-fire text-danger"></i> 今日逢低加碼重點推薦 Top 3</h3>
         <div class="biweekly-top3-grid">
             ${top3Html}
         </div>
