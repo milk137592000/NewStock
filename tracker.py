@@ -26,6 +26,9 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), "state.json")
 def get_env_config():
     return {
         "DISCORD_WEBHOOK_URL": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+        "DISCORD_WEBHOOK_MARKET": os.getenv("DISCORD_WEBHOOK_MARKET", "").strip(),
+        "DISCORD_WEBHOOK_SIGNAL": os.getenv("DISCORD_WEBHOOK_SIGNAL", "").strip(),
+        "DISCORD_WEBHOOK_DAILY": os.getenv("DISCORD_WEBHOOK_DAILY", "").strip(),
         "LINE_CHANNEL_ACCESS_TOKEN": os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip(),
         "LINE_USER_ID": os.getenv("LINE_USER_ID", "").strip(),
         "DROP_THRESHOLD": float(os.getenv("DROP_THRESHOLD", 500)),
@@ -139,16 +142,35 @@ def _build_discord_payload(message: str) -> dict:
         ]
     }
 
-def send_discord_message(message: str, force: bool = False, webhook_url: str = "") -> tuple[bool, str]:
-    """透過 Discord Webhook 發送彩色卡片通知（含夜間免打擾保護），回傳 (是否成功, 訊息)"""
+DISCORD_CHANNEL_ENV_KEYS = {
+    "market": "DISCORD_WEBHOOK_MARKET",
+    "signal": "DISCORD_WEBHOOK_SIGNAL",
+    "daily": "DISCORD_WEBHOOK_DAILY",
+    "default": "DISCORD_WEBHOOK_URL",
+}
+
+def _resolve_discord_webhook(config: dict, channel_type: str = "default", webhook_url: str = "") -> str:
+    """依通知類型解析目標 Discord Webhook URL，若分頻道未設定則退回預設 URL"""
+    if webhook_url and webhook_url.strip():
+        return webhook_url.strip()
+    env_key = DISCORD_CHANNEL_ENV_KEYS.get(channel_type, "DISCORD_WEBHOOK_URL")
+    return (config.get(env_key) or config.get("DISCORD_WEBHOOK_URL") or "").strip()
+
+def send_discord_message(
+    message: str,
+    force: bool = False,
+    webhook_url: str = "",
+    channel_type: str = "default",
+) -> tuple[bool, str]:
+    """透過 Discord Webhook 發送彩色卡片通知（含夜間免打擾保護與分頻道路由），回傳 (是否成功, 訊息)"""
     if is_night_quiet_hours() and not force:
         print(f"[DISCORD QUIET] 目前為夜間免打擾時段 ({now_taipei().strftime('%H:%M')})，靜音略過發送: {message[:30]}...")
         return False, "夜間免打擾時段已靜音略過"
 
     config = get_env_config()
-    target_url = (webhook_url or config["DISCORD_WEBHOOK_URL"]).strip()
+    target_url = _resolve_discord_webhook(config, channel_type=channel_type, webhook_url=webhook_url)
     if not target_url:
-        print("[DISCORD WARNING] 未設定 DISCORD_WEBHOOK_URL，略過 Discord 發送。")
+        print(f"[DISCORD WARNING] 未設定 Discord Webhook URL (type={channel_type})，略過 Discord 發送。")
         return False, "尚未設定 Discord Webhook URL"
 
     if not (target_url.startswith("https://discord.com/api/webhooks/") or target_url.startswith("https://discordapp.com/api/webhooks/")):
@@ -159,7 +181,7 @@ def send_discord_message(message: str, force: bool = False, webhook_url: str = "
     try:
         response = requests.post(target_url, json=payload, timeout=10)
         if response.status_code in (200, 204):
-            print("[DISCORD SUCCESS] Discord 訊息發送成功。")
+            print(f"[DISCORD SUCCESS] Discord 訊息發送成功 (channel_type={channel_type})。")
             return True, "Discord 通知發送成功"
         else:
             err = f"HTTP {response.status_code}: {response.text}"
@@ -169,10 +191,11 @@ def send_discord_message(message: str, force: bool = False, webhook_url: str = "
         print(f"[DISCORD ERROR] 連線 Discord Webhook 時發生異常: {e}")
         return False, f"連線異常: {e}"
 
-def send_notification(message: str, force: bool = False) -> bool:
-    """統一多管道推播入口：同時支援 Discord Webhook 與 LINE Messaging API"""
+def send_notification(message: str, force: bool = False, channel_type: str = "default") -> bool:
+    """統一多管道推播入口：同時支援 Discord Webhook（分頻道路由）與 LINE Messaging API"""
     config = get_env_config()
-    has_discord = bool(config["DISCORD_WEBHOOK_URL"])
+    discord_url = _resolve_discord_webhook(config, channel_type=channel_type)
+    has_discord = bool(discord_url)
     has_line = bool(config["LINE_CHANNEL_ACCESS_TOKEN"] and config["LINE_USER_ID"])
 
     if not has_discord and not has_line:
@@ -181,7 +204,7 @@ def send_notification(message: str, force: bool = False) -> bool:
 
     any_success = False
     if has_discord:
-        ok, _ = send_discord_message(message, force=force)
+        ok, _ = send_discord_message(message, force=force, channel_type=channel_type)
         if ok:
             any_success = True
     if has_line:
@@ -788,12 +811,15 @@ def run_tracking_cycle(send_notifications: bool = True) -> dict:
             print(f"[TRACKER ERROR] 獲取 {code} 週線指標失敗: {e}")
         
     all_notifications = []
+    routed_notifications = []
     
     # 3. 檢查大盤下跌
     drop_info = {}
     if current_index > 0 and yesterday_close > 0:
         drop_result = check_market_drop(current_index, yesterday_close, state, config)
-        all_notifications.extend(drop_result["messages"])
+        for m in drop_result["messages"]:
+            all_notifications.append(m)
+            routed_notifications.append((m, "market"))
         drop_info = {
             "current_index": current_index,
             "yesterday_close": yesterday_close,
@@ -848,15 +874,17 @@ def run_tracking_cycle(send_notifications: bool = True) -> dict:
                 
                 # 用週線訊號判斷進場
                 sig = check_etf_signals_weekly(code, meta, weekly, state, config)
-                all_notifications.extend(sig)
+                for m in sig:
+                    all_notifications.append(m)
+                    routed_notifications.append((m, "signal"))
                 card_data["signal"] = len(sig) > 0
             
             etf_info[code] = card_data
         
-    # 5. 發送通知（支援 Discord Webhook 與 LINE）
+    # 5. 發送通知（支援 Discord 分頻道 Webhook 與 LINE）
     if send_notifications:
-        for msg in all_notifications:
-            send_notification(msg)
+        for msg, ch_type in routed_notifications:
+            send_notification(msg, channel_type=ch_type)
     else:
         if all_notifications:
             print(f"[TRACKER] 靜音模式，略過發送 {len(all_notifications)} 則通知。")
@@ -988,7 +1016,7 @@ def run_daily_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
     )
     
     if send_line:
-        send_notification(msg)
+        send_notification(msg, channel_type="daily")
         
     # 更新 state
     state["last_daily_date"] = today_str

@@ -52,6 +52,9 @@ if os.path.exists(STATIC_DIR):
 
 class ConfigUpdate(BaseModel):
     DISCORD_WEBHOOK_URL: str = ""
+    DISCORD_WEBHOOK_MARKET: str = ""
+    DISCORD_WEBHOOK_SIGNAL: str = ""
+    DISCORD_WEBHOOK_DAILY: str = ""
     LINE_CHANNEL_ACCESS_TOKEN: str = ""
     LINE_USER_ID: str = ""
     DROP_THRESHOLD: float
@@ -148,24 +151,29 @@ async def test_line_notification(request: Request):
 
 @app.post("/api/test_discord")
 async def test_discord_notification(request: Request):
-    """測試 Discord Webhook 推播通知（支援傳入表單尚未儲存的 webhook_url 先行測試）"""
+    """測試 Discord Webhook 推播通知（支援指定 channel_type 與未儲存的 webhook_url）"""
     webhook_url = ""
-    test_msg = "🔔【測試通知】台股與 ETF 智慧監控系統\n恭喜！您的 Discord Webhook 已成功連線，未來盤中大跌、ETF 加碼訊號與每日精選都會即時推播至此頻道！"
+    channel_type = "default"
+    test_msg = "🔔【測試通知】台股與 ETF 智慧監控系統\n恭喜！您的 Discord Webhook 已成功連線，未來通知將會即時推播至此頻道！"
     try:
         body = await request.json()
+        if body.get("channel_type") in ("default", "market", "signal", "daily"):
+            channel_type = body["channel_type"]
         if body.get("message"):
             test_msg = body["message"]
         if body.get("webhook_url"):
             candidate = body["webhook_url"].strip()
-            # 若不是遮蔽字串才覆蓋測試，否則用系統已儲存的 URL
-            if "..." not in candidate:
+            # 若不是遮蔽字串才覆蓋測試，否則用系統已儲存對應頻道的 URL
+            if "..." not in candidate and candidate != "已設定":
                 webhook_url = candidate
     except Exception:
         pass
 
-    success, detail = send_discord_message(test_msg, force=True, webhook_url=webhook_url)
+    success, detail = send_discord_message(
+        test_msg, force=True, webhook_url=webhook_url, channel_type=channel_type
+    )
     if success:
-        return {"success": True, "message": "測試通知已發送，請查看您的 Discord 頻道！"}
+        return {"success": True, "message": f"測試通知已發送（頻道類型：{channel_type}），請查看您的 Discord 頻道！"}
     else:
         raise HTTPException(status_code=400, detail=detail)
 
@@ -176,6 +184,18 @@ def _mask_discord_url(url: str) -> str:
     if len(url) > 45:
         return url[:42] + "..." + url[-6:]
     return "已設定"
+
+def _resolve_webhook_to_save(incoming: str, current: str, label: str) -> str:
+    """驗證與解析欲儲存的 Discord Webhook URL（保留遮蔽值並檢查格式）"""
+    val = (incoming or "").strip()
+    if "..." in val or val == "已設定":
+        return current
+    if val and not (
+        val.startswith("https://discord.com/api/webhooks/")
+        or val.startswith("https://discordapp.com/api/webhooks/")
+    ):
+        raise HTTPException(status_code=400, detail=f"{label} 格式不正確，應以 https://discord.com/api/webhooks/ 開頭。")
+    return val
 
 @app.get("/api/config")
 async def get_config():
@@ -189,9 +209,15 @@ async def get_config():
         masked_token = token[:6] + "..." + token[-6:] if len(token) > 12 else "已設定"
         
     discord_url = config["DISCORD_WEBHOOK_URL"]
+    discord_market = config["DISCORD_WEBHOOK_MARKET"]
+    discord_signal = config["DISCORD_WEBHOOK_SIGNAL"]
+    discord_daily = config["DISCORD_WEBHOOK_DAILY"]
     return {
         "DISCORD_WEBHOOK_URL_MASKED": _mask_discord_url(discord_url),
-        "DISCORD_CONFIGURED": bool(discord_url),
+        "DISCORD_WEBHOOK_MARKET_MASKED": _mask_discord_url(discord_market),
+        "DISCORD_WEBHOOK_SIGNAL_MASKED": _mask_discord_url(discord_signal),
+        "DISCORD_WEBHOOK_DAILY_MASKED": _mask_discord_url(discord_daily),
+        "DISCORD_CONFIGURED": bool(discord_url or discord_market or discord_signal or discord_daily),
         "LINE_CHANNEL_ACCESS_TOKEN_MASKED": masked_token,
         "LINE_USER_ID": config["LINE_USER_ID"],
         "DROP_THRESHOLD": config["DROP_THRESHOLD"],
@@ -212,18 +238,24 @@ async def update_config(update_data: ConfigUpdate):
     if "..." in token_to_save or token_to_save == "已設定":
         token_to_save = current_config["LINE_CHANNEL_ACCESS_TOKEN"]
 
-    # 如果使用者傳入的 Discord Webhook URL 為遮蔽格式，保留現有 URL
-    discord_to_save = update_data.DISCORD_WEBHOOK_URL.strip()
-    if "..." in discord_to_save or discord_to_save == "已設定":
-        discord_to_save = current_config["DISCORD_WEBHOOK_URL"]
-    elif discord_to_save and not (
-        discord_to_save.startswith("https://discord.com/api/webhooks/")
-        or discord_to_save.startswith("https://discordapp.com/api/webhooks/")
-    ):
-        raise HTTPException(status_code=400, detail="Discord Webhook URL 格式不正確，應以 https://discord.com/api/webhooks/ 開頭。")
+    discord_to_save = _resolve_webhook_to_save(
+        update_data.DISCORD_WEBHOOK_URL, current_config["DISCORD_WEBHOOK_URL"], "預設 Discord Webhook URL"
+    )
+    discord_market_to_save = _resolve_webhook_to_save(
+        update_data.DISCORD_WEBHOOK_MARKET, current_config["DISCORD_WEBHOOK_MARKET"], "大盤暴跌警報 Webhook URL"
+    )
+    discord_signal_to_save = _resolve_webhook_to_save(
+        update_data.DISCORD_WEBHOOK_SIGNAL, current_config["DISCORD_WEBHOOK_SIGNAL"], "ETF 進場訊號 Webhook URL"
+    )
+    discord_daily_to_save = _resolve_webhook_to_save(
+        update_data.DISCORD_WEBHOOK_DAILY, current_config["DISCORD_WEBHOOK_DAILY"], "每日精選 Webhook URL"
+    )
         
     env_lines = [
         f"DISCORD_WEBHOOK_URL={discord_to_save}",
+        f"DISCORD_WEBHOOK_MARKET={discord_market_to_save}",
+        f"DISCORD_WEBHOOK_SIGNAL={discord_signal_to_save}",
+        f"DISCORD_WEBHOOK_DAILY={discord_daily_to_save}",
         f"LINE_CHANNEL_ACCESS_TOKEN={token_to_save}",
         f"LINE_USER_ID={update_data.LINE_USER_ID.strip()}",
         f"DROP_THRESHOLD={update_data.DROP_THRESHOLD}",

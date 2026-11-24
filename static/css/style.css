@@ -615,8 +615,9 @@ body {
 
 .form-group input[type="text"],
 .form-group input[type="number"],
-.form-group input[type="password"] {
-    background: rgba(0, 0, 0, 0.2);
+.form-group input[type="password"],
+.form-group select {
+    background: rgba(0, 0, 0, 0.25);
     border: 1px solid var(--card-border);
     border-radius: 8px;
     padding: 0.75rem 1rem;
@@ -626,10 +627,21 @@ body {
     transition: var(--transition);
 }
 
-.form-group input:focus {
+.form-group input:focus,
+.form-group select:focus {
     border-color: var(--color-primary);
     outline: none;
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.sub-section-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #93c5fd;
+    margin: 0.5rem 0 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
 }
 
 .form-group small {

@@ -110,6 +110,9 @@ function initEventListeners() {
 
         const configPayload = {
             DISCORD_WEBHOOK_URL: document.getElementById('discord-webhook-url').value,
+            DISCORD_WEBHOOK_MARKET: document.getElementById('discord-webhook-market').value,
+            DISCORD_WEBHOOK_SIGNAL: document.getElementById('discord-webhook-signal').value,
+            DISCORD_WEBHOOK_DAILY: document.getElementById('discord-webhook-daily').value,
             LINE_CHANNEL_ACCESS_TOKEN: document.getElementById('line-token').value,
             LINE_USER_ID: document.getElementById('line-userid').value,
             DROP_THRESHOLD: parseFloat(document.getElementById('drop-threshold').value),
@@ -147,7 +150,22 @@ function initEventListeners() {
         btnTestDiscord.addEventListener('click', async () => {
             const statusDiv = document.getElementById('test-status');
             const testMsg = document.getElementById('test-message').value;
-            const webhookUrl = document.getElementById('discord-webhook-url').value;
+            const channelTypeEl = document.getElementById('test-discord-channel');
+            const channelType = channelTypeEl ? channelTypeEl.value : 'default';
+
+            const inputIdMap = {
+                default: 'discord-webhook-url',
+                market: 'discord-webhook-market',
+                signal: 'discord-webhook-signal',
+                daily: 'discord-webhook-daily',
+            };
+            const targetInput = document.getElementById(inputIdMap[channelType] || 'discord-webhook-url');
+            let webhookUrl = targetInput ? targetInput.value : '';
+            // 若測試分頻道且該格目前留空，嘗試取預設頻道輸入框（若還沒按儲存時也能測試）
+            if (!webhookUrl && channelType !== 'default') {
+                const defaultInput = document.getElementById('discord-webhook-url');
+                webhookUrl = defaultInput ? defaultInput.value : '';
+            }
 
             btnTestDiscord.disabled = true;
             btnTestDiscord.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 發送中...';
@@ -158,7 +176,11 @@ function initEventListeners() {
                 const res = await fetch('/api/test_discord', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: testMsg, webhook_url: webhookUrl })
+                    body: JSON.stringify({
+                        message: testMsg,
+                        webhook_url: webhookUrl,
+                        channel_type: channelType
+                    })
                 });
                 const data = await res.json();
                 if (res.ok && data.success) {
@@ -246,10 +268,16 @@ async function fetchConfig() {
         const res = await fetch('/api/config');
         const data = await res.json();
         
-        const discordInput = document.getElementById('discord-webhook-url');
-        if (discordInput) {
-            discordInput.value = data.DISCORD_WEBHOOK_URL_MASKED || '';
-        }
+        const discordFields = {
+            'discord-webhook-url': data.DISCORD_WEBHOOK_URL_MASKED,
+            'discord-webhook-market': data.DISCORD_WEBHOOK_MARKET_MASKED,
+            'discord-webhook-signal': data.DISCORD_WEBHOOK_SIGNAL_MASKED,
+            'discord-webhook-daily': data.DISCORD_WEBHOOK_DAILY_MASKED,
+        };
+        Object.entries(discordFields).forEach(([elId, val]) => {
+            const el = document.getElementById(elId);
+            if (el) el.value = val || '';
+        });
         document.getElementById('line-token').value = data.LINE_CHANNEL_ACCESS_TOKEN_MASKED || '';
         document.getElementById('line-userid').value = data.LINE_USER_ID || '';
         document.getElementById('drop-threshold').value = data.DROP_THRESHOLD || 500;

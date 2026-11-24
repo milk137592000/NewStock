@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=8">
+    <link rel="stylesheet" href="/static/css/style.css?v=9">
 </head>
 <body>
     <div class="app-container">
@@ -308,9 +308,22 @@
                         <h3><i class="fa-brands fa-discord text-discord"></i> Discord Webhook 配置 <span class="badge-recommend">推薦・免費無上限</span></h3>
                         <form id="form-settings">
                             <div class="form-group">
-                                <label for="discord-webhook-url">Discord Webhook URL</label>
+                                <label for="discord-webhook-url">預設 Discord Webhook URL（通用/備援）</label>
                                 <input type="password" id="discord-webhook-url" placeholder="貼上 https://discord.com/api/webhooks/...">
                                 <small>支援彩色卡片通知，完全免費且無每月 200 則上限。留空則不發送 Discord。</small>
+                            </div>
+                            <div class="sub-section-title"><i class="fa-solid fa-code-branch"></i> 分頻道推播設定（選填：留空則自動發送至上方預設頻道）</div>
+                            <div class="form-group">
+                                <label for="discord-webhook-market">🚨 大盤暴跌警報頻道 Webhook</label>
+                                <input type="password" id="discord-webhook-market" placeholder="選填：專屬接收「當日/波段大跌」警報">
+                            </div>
+                            <div class="form-group">
+                                <label for="discord-webhook-signal">📈 ETF 進場訊號頻道 Webhook</label>
+                                <input type="password" id="discord-webhook-signal" placeholder="選填：專屬接收「週線 KD/布林買進訊號」">
+                            </div>
+                            <div class="form-group">
+                                <label for="discord-webhook-daily">🗓️ 每日長線精選頻道 Webhook</label>
+                                <input type="password" id="discord-webhook-daily" placeholder="選填：專屬接收「每日 14:30 長線精選報告」">
                             </div>
                             <div class="divider"></div>
                             <h3><i class="fa-brands fa-line text-success"></i> LINE Messaging API 配置（選填）</h3>
@@ -363,7 +376,16 @@
                     <div class="card settings-card action-card">
                         <h3><i class="fa-solid fa-screwdriver-wrench"></i> 系統測試與說明</h3>
                         <div class="test-panel">
-                            <p>輸入 Webhook 網址或儲存後，點擊下方按鈕即可立即發送測試卡片至您的手機。</p>
+                            <p>選擇要測試的目標頻道並點擊按鈕，即可立即發送測試卡片至您的 Discord 或 LINE。</p>
+                            <div class="form-group">
+                                <label for="test-discord-channel">測試目標 Discord 頻道</label>
+                                <select id="test-discord-channel">
+                                    <option value="default">預設通用頻道 (DISCORD_WEBHOOK_URL)</option>
+                                    <option value="market">🚨 大盤暴跌警報頻道</option>
+                                    <option value="signal">📈 ETF 進場訊號頻道</option>
+                                    <option value="daily">🗓️ 每日長線精選頻道</option>
+                                </select>
+                            </div>
                             <div class="form-group">
                                 <input type="text" id="test-message" value="🔔 測試通知：您的台灣大盤與 ETF 追蹤機器人已就緒！">
                             </div>
@@ -374,14 +396,13 @@
                             <div id="test-status" class="test-status-msg"></div>
                         </div>
                         <div class="guide-panel">
-                            <h4>如何 30 秒建立 Discord Webhook？（推薦）</h4>
+                            <h4>如何讓「不同頻道」接收「不同訊息」？</h4>
                             <ol>
-                                <li>開啟 Discord（手機或電腦版皆可），點左側 <strong>「+」建立自己的私人伺服器</strong>（只留自己一人即可）。</li>
-                                <li>在任一文字頻道旁點擊 <strong>齒輪「編輯頻道」</strong> → <strong>「整合」</strong> → <strong>「Webhook」</strong>。</li>
-                                <li>點擊 <strong>「新 Webhook」</strong>，再點 <strong>「複製 Webhook 網址」</strong>。</li>
-                                <li>貼到左側「Discord Webhook URL」欄位，點「發送 Discord 測試」確認收到卡片後，按「儲存設定」即可！</li>
-                                <li><strong>重要提醒（永久生效）</strong>：Render 免費主機重新部署會重置本機檔案，建議也將同一組 <code>DISCORD_WEBHOOK_URL</code> 貼到 Render 後台的 <strong>Environment Variables</strong>，即可永久保存。</li>
-                                <li><strong>手機不漏通知檢查</strong>：在該 Discord 頻道長按「通知設定」設為 <strong>「所有訊息」</strong>，即可即時接收大盤與 ETF 通知。</li>
+                                <li>在您的 Discord 私人伺服器中，建立不同文字頻道（例如：<code>#大盤暴跌警報</code>、<code>#etf進場訊號</code>、<code>#每日長線精選</code>）。</li>
+                                <li>對每個頻道分別點 <strong>「編輯頻道」→「整合」→「Webhook」→「新 Webhook」→「複製 Webhook 網址」</strong>（每個頻道都會有自己獨立的網址）。</li>
+                                <li>將對應頻道的網址貼入左側「分頻道推播設定」中（沒貼的類型會自動退回發送到最上方的「預設頻道」）。</li>
+                                <li><strong>通知靜音小技巧</strong>：可將 <code>#大盤暴跌警報</code> 的 Discord 頻道通知設為「所有訊息」響鈴提醒；<code>#每日長線精選</code> 設為靜音，想看時再點進去瀏覽，完全不互相干擾！</li>
+                                <li><strong>Render 永久保存提醒</strong>：建議同時將對應的環境變數（<code>DISCORD_WEBHOOK_URL</code> / <code>DISCORD_WEBHOOK_MARKET</code> / <code>DISCORD_WEBHOOK_SIGNAL</code> / <code>DISCORD_WEBHOOK_DAILY</code>）加入 Render 後台的 <strong>Environment Variables</strong>，跨版本更新不遺失。</li>
                             </ol>
                         </div>
                     </div>
@@ -389,6 +410,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/js/app.js?v=8"></script>
+    <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>
