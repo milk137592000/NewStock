@@ -109,6 +109,7 @@ function initEventListeners() {
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 儲存中...';
 
         const configPayload = {
+            DISCORD_WEBHOOK_URL: document.getElementById('discord-webhook-url').value,
             LINE_CHANNEL_ACCESS_TOKEN: document.getElementById('line-token').value,
             LINE_USER_ID: document.getElementById('line-userid').value,
             DROP_THRESHOLD: parseFloat(document.getElementById('drop-threshold').value),
@@ -140,7 +141,45 @@ function initEventListeners() {
         }
     });
 
-    // 發送測試通知按鈕
+    // 發送 Discord 測試通知按鈕
+    const btnTestDiscord = document.getElementById('btn-test-discord');
+    if (btnTestDiscord) {
+        btnTestDiscord.addEventListener('click', async () => {
+            const statusDiv = document.getElementById('test-status');
+            const testMsg = document.getElementById('test-message').value;
+            const webhookUrl = document.getElementById('discord-webhook-url').value;
+
+            btnTestDiscord.disabled = true;
+            btnTestDiscord.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 發送中...';
+            statusDiv.className = 'test-status-msg';
+            statusDiv.textContent = '正在發送測試卡片至 Discord...';
+
+            try {
+                const res = await fetch('/api/test_discord', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: testMsg, webhook_url: webhookUrl })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    statusDiv.className = 'test-status-msg success';
+                    statusDiv.innerHTML = '<i class="fa-solid fa-check"></i> ' + data.message;
+                } else {
+                    statusDiv.className = 'test-status-msg error';
+                    statusDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ' + (data.detail || data.message || '發送失敗');
+                }
+            } catch (err) {
+                console.error(err);
+                statusDiv.className = 'test-status-msg error';
+                statusDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 連線失敗，請檢查後端是否正常運作。';
+            } finally {
+                btnTestDiscord.disabled = false;
+                btnTestDiscord.innerHTML = '<i class="fa-brands fa-discord"></i> 發送 Discord 測試';
+            }
+        });
+    }
+
+    // 發送 LINE 測試通知按鈕
     document.getElementById('btn-test-line').addEventListener('click', async () => {
         const btn = document.getElementById('btn-test-line');
         const statusDiv = document.getElementById('test-status');
@@ -158,12 +197,12 @@ function initEventListeners() {
                 body: JSON.stringify({ message: testMsg })
             });
             const data = await res.json();
-            if (data.success) {
+            if (res.ok && data.success) {
                 statusDiv.className = 'test-status-msg success';
                 statusDiv.innerHTML = '<i class="fa-solid fa-check"></i> ' + data.message;
             } else {
                 statusDiv.className = 'test-status-msg error';
-                statusDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ' + data.message;
+                statusDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ' + (data.detail || data.message || '發送失敗');
             }
         } catch (err) {
             console.error(err);
@@ -171,7 +210,7 @@ function initEventListeners() {
             statusDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 連線失敗，請檢查後端是否正常運作及 .env 設定。';
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="fa-brands fa-line"></i> 發送測試通知';
+            btn.innerHTML = '<i class="fa-brands fa-line"></i> 發送 LINE 測試';
         }
     });
 
@@ -185,7 +224,7 @@ function initEventListeners() {
                 const res = await fetch('/api/analysis/biweekly/trigger', { method: 'POST' });
                 const json = await res.json();
                 if (json.success) {
-                    showNotification('長線標的每日精選分析已成功產出並推播至 LINE！', 'success');
+                    showNotification('長線標的每日精選分析已成功產出並推播！', 'success');
                     renderBiweeklyContent(json.data);
                 } else {
                     showNotification('推播失敗: ' + (json.detail || '未知錯誤'), 'error');
@@ -195,7 +234,7 @@ function initEventListeners() {
                 showNotification('連線 API 異常。', 'error');
             } finally {
                 btnBiweekly.disabled = false;
-                btnBiweekly.innerHTML = '<i class="fa-brands fa-line"></i> 立即推送每日精選至 LINE';
+                btnBiweekly.innerHTML = '<i class="fa-solid fa-paper-plane"></i> 立即推送每日精選通知';
             }
         });
     }
@@ -207,6 +246,10 @@ async function fetchConfig() {
         const res = await fetch('/api/config');
         const data = await res.json();
         
+        const discordInput = document.getElementById('discord-webhook-url');
+        if (discordInput) {
+            discordInput.value = data.DISCORD_WEBHOOK_URL_MASKED || '';
+        }
         document.getElementById('line-token').value = data.LINE_CHANNEL_ACCESS_TOKEN_MASKED || '';
         document.getElementById('line-userid').value = data.LINE_USER_ID || '';
         document.getElementById('drop-threshold').value = data.DROP_THRESHOLD || 500;

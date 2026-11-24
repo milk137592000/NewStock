@@ -25,8 +25,9 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), "state.json")
 
 def get_env_config():
     return {
-        "LINE_CHANNEL_ACCESS_TOKEN": os.getenv("LINE_CHANNEL_ACCESS_TOKEN", ""),
-        "LINE_USER_ID": os.getenv("LINE_USER_ID", ""),
+        "DISCORD_WEBHOOK_URL": os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+        "LINE_CHANNEL_ACCESS_TOKEN": os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip(),
+        "LINE_USER_ID": os.getenv("LINE_USER_ID", "").strip(),
         "DROP_THRESHOLD": float(os.getenv("DROP_THRESHOLD", 500)),
         "DROP_STEP": float(os.getenv("DROP_STEP", 100)),
         "USE_KD_STRATEGY": int(os.getenv("USE_KD_STRATEGY", 1)) == 1,
@@ -104,6 +105,90 @@ def send_line_message(message: str, force: bool = False) -> bool:
     except Exception as e:
         print(f"[LINE ERROR] 連線 LINE API 時發生異常: {e}")
         return False
+
+def _build_discord_payload(message: str) -> dict:
+    """將文字通知包裝為 Discord Embed 彩色卡片格式"""
+    lines = [line for line in message.strip().split("\n")]
+    title = lines[0][:250] if lines else "台股與 ETF 追蹤通知"
+    body = "\n".join(lines[1:]).strip() if len(lines) > 1 else message
+    # 保護 Discord Embed description 上限 (4096 字元)
+    if len(body) > 4000:
+        body = body[:3997] + "..."
+
+    # 依通知類型自動搭配顏色
+    if any(k in title for k in ("暴跌", "重大警報", "累積下跌", "下跌警報")):
+        color = 0xEF4444  # 紅色警示
+    elif "進場訊號" in title:
+        color = 0x22C55E  # 綠色買進訊號
+    elif "每日精選" in title or "雙週報" in title:
+        color = 0xF59E0B  # 金色日報
+    else:
+        color = 0x3B82F6  # 藍色一般資訊
+
+    return {
+        "username": "台股與 ETF 智慧監控",
+        "embeds": [
+            {
+                "title": title,
+                "description": body or title,
+                "color": color,
+                "footer": {
+                    "text": f"台北時間 {now_taipei().strftime('%Y-%m-%d %H:%M:%S')}"
+                }
+            }
+        ]
+    }
+
+def send_discord_message(message: str, force: bool = False, webhook_url: str = "") -> tuple[bool, str]:
+    """透過 Discord Webhook 發送彩色卡片通知（含夜間免打擾保護），回傳 (是否成功, 訊息)"""
+    if is_night_quiet_hours() and not force:
+        print(f"[DISCORD QUIET] 目前為夜間免打擾時段 ({now_taipei().strftime('%H:%M')})，靜音略過發送: {message[:30]}...")
+        return False, "夜間免打擾時段已靜音略過"
+
+    config = get_env_config()
+    target_url = (webhook_url or config["DISCORD_WEBHOOK_URL"]).strip()
+    if not target_url:
+        print("[DISCORD WARNING] 未設定 DISCORD_WEBHOOK_URL，略過 Discord 發送。")
+        return False, "尚未設定 Discord Webhook URL"
+
+    if not (target_url.startswith("https://discord.com/api/webhooks/") or target_url.startswith("https://discordapp.com/api/webhooks/")):
+        print("[DISCORD ERROR] Webhook URL 格式不正確。")
+        return False, "Webhook URL 格式必須為 https://discord.com/api/webhooks/..."
+
+    payload = _build_discord_payload(message)
+    try:
+        response = requests.post(target_url, json=payload, timeout=10)
+        if response.status_code in (200, 204):
+            print("[DISCORD SUCCESS] Discord 訊息發送成功。")
+            return True, "Discord 通知發送成功"
+        else:
+            err = f"HTTP {response.status_code}: {response.text}"
+            print(f"[DISCORD ERROR] 發送失敗，{err}")
+            return False, f"發送失敗（{err}）"
+    except Exception as e:
+        print(f"[DISCORD ERROR] 連線 Discord Webhook 時發生異常: {e}")
+        return False, f"連線異常: {e}"
+
+def send_notification(message: str, force: bool = False) -> bool:
+    """統一多管道推播入口：同時支援 Discord Webhook 與 LINE Messaging API"""
+    config = get_env_config()
+    has_discord = bool(config["DISCORD_WEBHOOK_URL"])
+    has_line = bool(config["LINE_CHANNEL_ACCESS_TOKEN"] and config["LINE_USER_ID"])
+
+    if not has_discord and not has_line:
+        print(f"[NOTIFY WARNING] 未設定任何通知管道（Discord / LINE），僅輸出日誌:\n{message}")
+        return False
+
+    any_success = False
+    if has_discord:
+        ok, _ = send_discord_message(message, force=force)
+        if ok:
+            any_success = True
+    if has_line:
+        if send_line_message(message, force=force):
+            any_success = True
+
+    return any_success
 
 def load_state() -> dict:
     """載入警報狀態"""
@@ -768,10 +853,10 @@ def run_tracking_cycle(send_notifications: bool = True) -> dict:
             
             etf_info[code] = card_data
         
-    # 5. 發送 LINE 通知
+    # 5. 發送通知（支援 Discord Webhook 與 LINE）
     if send_notifications:
         for msg in all_notifications:
-            send_line_message(msg)
+            send_notification(msg)
     else:
         if all_notifications:
             print(f"[TRACKER] 靜音模式，略過發送 {len(all_notifications)} 則通知。")
@@ -903,7 +988,7 @@ def run_daily_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
     )
     
     if send_line:
-        send_line_message(msg)
+        send_notification(msg)
         
     # 更新 state
     state["last_daily_date"] = today_str

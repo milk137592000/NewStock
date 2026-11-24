@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=7">
+    <link rel="stylesheet" href="/static/css/style.css?v=8">
 </head>
 <body>
     <div class="app-container">
@@ -267,7 +267,7 @@
                         <h2><i class="fa-solid fa-gem text-warning"></i> 長線長期持有標的・每日精選池</h2>
                         <p>專注於市值型與全球核心潛力 ETF。每個交易日盤後自動更新健康度與回檔位階，嚴守紀律逢低佈局。</p>
                     </div>
-                    <button id="btn-trigger-biweekly" class="btn btn-primary"><i class="fa-brands fa-line"></i> 立即推送每日精選至 LINE</button>
+                    <button id="btn-trigger-biweekly" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i> 立即推送每日精選通知</button>
                 </div>
                 
                 <div id="biweekly-content">
@@ -305,16 +305,23 @@
             <section id="tab-settings" class="tab-content">
                 <div class="settings-grid">
                     <div class="card settings-card">
-                        <h3><i class="fa-brands fa-line text-success"></i> LINE Messaging API 配置</h3>
+                        <h3><i class="fa-brands fa-discord text-discord"></i> Discord Webhook 配置 <span class="badge-recommend">推薦・免費無上限</span></h3>
                         <form id="form-settings">
                             <div class="form-group">
+                                <label for="discord-webhook-url">Discord Webhook URL</label>
+                                <input type="password" id="discord-webhook-url" placeholder="貼上 https://discord.com/api/webhooks/...">
+                                <small>支援彩色卡片通知，完全免費且無每月 200 則上限。留空則不發送 Discord。</small>
+                            </div>
+                            <div class="divider"></div>
+                            <h3><i class="fa-brands fa-line text-success"></i> LINE Messaging API 配置（選填）</h3>
+                            <div class="form-group">
                                 <label for="line-token">Channel Access Token</label>
-                                <input type="password" id="line-token" placeholder="輸入您的 Channel Access Token" required>
-                                <small>LINE Developer 發行的長期有效 Token。</small>
+                                <input type="password" id="line-token" placeholder="選填：輸入您的 Channel Access Token">
+                                <small>LINE 輕用量免費方案每月上限 200 則，若已設定 Discord 可留空。</small>
                             </div>
                             <div class="form-group">
                                 <label for="line-userid">Your User ID</label>
-                                <input type="text" id="line-userid" placeholder="輸入您的 LINE User ID (如 U123...)" required>
+                                <input type="text" id="line-userid" placeholder="選填：輸入您的 LINE User ID (如 U123...)">
                                 <small>位於 Basic Settings 頁面底部的 33 碼 User ID。</small>
                             </div>
                             <div class="divider"></div>
@@ -326,7 +333,7 @@
                                 </div>
                                 <div class="form-group">
                                     <label for="drop-step">後續每再跌多少點通知 (點)</label>
-                                    <input type="number" id="drop-step" min="50" max="500" required>
+                                    <input type="number" id="drop-step" min="50" max="1000" required>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -356,23 +363,25 @@
                     <div class="card settings-card action-card">
                         <h3><i class="fa-solid fa-screwdriver-wrench"></i> 系統測試與說明</h3>
                         <div class="test-panel">
-                            <p>點擊下方按鈕以發送測試訊息，驗證 LINE Bot 是否能正確將訊息推送至您的手機。</p>
+                            <p>輸入 Webhook 網址或儲存後，點擊下方按鈕即可立即發送測試卡片至您的手機。</p>
                             <div class="form-group">
                                 <input type="text" id="test-message" value="🔔 測試通知：您的台灣大盤與 ETF 追蹤機器人已就緒！">
                             </div>
-                            <button id="btn-test-line" class="btn btn-success"><i class="fa-brands fa-line"></i> 發送測試通知</button>
+                            <div class="test-actions-row">
+                                <button id="btn-test-discord" type="button" class="btn btn-discord"><i class="fa-brands fa-discord"></i> 發送 Discord 測試</button>
+                                <button id="btn-test-line" type="button" class="btn btn-success"><i class="fa-brands fa-line"></i> 發送 LINE 測試</button>
+                            </div>
                             <div id="test-status" class="test-status-msg"></div>
                         </div>
                         <div class="guide-panel">
-                            <h4>如何設定 LINE 機器人？</h4>
+                            <h4>如何 30 秒建立 Discord Webhook？（推薦）</h4>
                             <ol>
-                                <li>造訪 <a href="https://developers.line.biz/" target="_blank">LINE Developers Console</a> 並登入。</li>
-                                <li>點擊 "Create a new provider" 建立服務商。</li>
-                                <li>點擊 "Create a Messaging API channel" 建立機器人頻道。</li>
-                                <li>在 Messaging API 設定頁籤中掃描 QR Code 將 Bot 加為好友。</li>
-                                <li>在該頁籤底部點選 Issue 取得 Channel Access Token。</li>
-                                <li>在 Basic Settings 頁籤最下方複製您的 User ID。</li>
-                                <li>在左側表單中填入並點選儲存。</li>
+                                <li>開啟 Discord（手機或電腦版皆可），點左側 <strong>「+」建立自己的私人伺服器</strong>（只留自己一人即可）。</li>
+                                <li>在任一文字頻道旁點擊 <strong>齒輪「編輯頻道」</strong> → <strong>「整合」</strong> → <strong>「Webhook」</strong>。</li>
+                                <li>點擊 <strong>「新 Webhook」</strong>，再點 <strong>「複製 Webhook 網址」</strong>。</li>
+                                <li>貼到左側「Discord Webhook URL」欄位，點「發送 Discord 測試」確認收到卡片後，按「儲存設定」即可！</li>
+                                <li><strong>重要提醒（永久生效）</strong>：Render 免費主機重新部署會重置本機檔案，建議也將同一組 <code>DISCORD_WEBHOOK_URL</code> 貼到 Render 後台的 <strong>Environment Variables</strong>，即可永久保存。</li>
+                                <li><strong>手機不漏通知檢查</strong>：在該 Discord 頻道長按「通知設定」設為 <strong>「所有訊息」</strong>，即可即時接收大盤與 ETF 通知。</li>
                             </ol>
                         </div>
                     </div>
@@ -380,6 +389,6 @@
             </section>
         </main>
     </div>
-    <script src="/static/js/app.js?v=7"></script>
+    <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

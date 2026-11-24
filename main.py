@@ -8,7 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
-from tracker import run_tracking_cycle, get_env_config, send_line_message, get_historical_and_indicators, now_taipei, ETF_LIST, GROUP_LABELS, run_biweekly_etf_analysis, WATCHLIST_ETF
+from tracker import (
+    run_tracking_cycle, get_env_config, send_line_message, send_discord_message,
+    get_historical_and_indicators, now_taipei, ETF_LIST, GROUP_LABELS,
+    run_biweekly_etf_analysis, WATCHLIST_ETF
+)
 from scheduler import start_scheduler, shutdown_scheduler
 
 # 設定日誌
@@ -47,8 +51,9 @@ if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 class ConfigUpdate(BaseModel):
-    LINE_CHANNEL_ACCESS_TOKEN: str
-    LINE_USER_ID: str
+    DISCORD_WEBHOOK_URL: str = ""
+    LINE_CHANNEL_ACCESS_TOKEN: str = ""
+    LINE_USER_ID: str = ""
     DROP_THRESHOLD: float
     DROP_STEP: float
     USE_KD_STRATEGY: bool
@@ -135,24 +140,58 @@ async def test_line_notification(request: Request):
     except:
         test_msg = "🔔 這是一條來自台灣大盤指數追蹤系統的測試通知！"
         
-    success = send_line_message(test_msg)
+    success = send_line_message(test_msg, force=True)
     if success:
         return {"success": True, "message": "測試通知已發送，請檢查您的 LINE。"}
     else:
-        raise HTTPException(status_code=400, detail="發送失敗，請確認您的 LINE Token 與 User ID 是否設定正確。")
+        raise HTTPException(status_code=400, detail="發送失敗，請確認 LINE Token/User ID 是否正確，或本月 200 則免費額度是否已用罄。")
+
+@app.post("/api/test_discord")
+async def test_discord_notification(request: Request):
+    """測試 Discord Webhook 推播通知（支援傳入表單尚未儲存的 webhook_url 先行測試）"""
+    webhook_url = ""
+    test_msg = "🔔【測試通知】台股與 ETF 智慧監控系統\n恭喜！您的 Discord Webhook 已成功連線，未來盤中大跌、ETF 加碼訊號與每日精選都會即時推播至此頻道！"
+    try:
+        body = await request.json()
+        if body.get("message"):
+            test_msg = body["message"]
+        if body.get("webhook_url"):
+            candidate = body["webhook_url"].strip()
+            # 若不是遮蔽字串才覆蓋測試，否則用系統已儲存的 URL
+            if "..." not in candidate:
+                webhook_url = candidate
+    except Exception:
+        pass
+
+    success, detail = send_discord_message(test_msg, force=True, webhook_url=webhook_url)
+    if success:
+        return {"success": True, "message": "測試通知已發送，請查看您的 Discord 頻道！"}
+    else:
+        raise HTTPException(status_code=400, detail=detail)
+
+def _mask_discord_url(url: str) -> str:
+    """遮蔽 Discord Webhook URL 後半段 token，避免前端洩漏"""
+    if not url:
+        return ""
+    if len(url) > 45:
+        return url[:42] + "..." + url[-6:]
+    return "已設定"
 
 @app.get("/api/config")
 async def get_config():
     """取得當前配置 (部分敏感資訊會遮蔽)"""
     config = get_env_config()
     
-    # 遮蔽 Token
+    # 遮蔽 LINE Token
     token = config["LINE_CHANNEL_ACCESS_TOKEN"]
     masked_token = ""
     if token:
         masked_token = token[:6] + "..." + token[-6:] if len(token) > 12 else "已設定"
         
+    discord_url = config["DISCORD_WEBHOOK_URL"]
     return {
+        "DISCORD_WEBHOOK_URL_MASKED": _mask_discord_url(discord_url),
+        "DISCORD_CONFIGURED": bool(discord_url),
         "LINE_CHANNEL_ACCESS_TOKEN_MASKED": masked_token,
         "LINE_USER_ID": config["LINE_USER_ID"],
         "DROP_THRESHOLD": config["DROP_THRESHOLD"],
@@ -165,20 +204,28 @@ async def get_config():
 @app.post("/api/config")
 async def update_config(update_data: ConfigUpdate):
     """更新環境變數設定"""
-    env_path = os.path.join(os.path.dirname(BASE_DIR), ".env") # 與 main.py 同層或上一層
-    # 我們這裡專案在 tw_stock_tracker 目錄，所以 .env 會在該目錄下
     env_path = os.path.join(BASE_DIR, ".env")
-    
     current_config = get_env_config()
     
-    # 如果使用者傳入的 Token 為遮蔽格式或為空，表示不更新 Token
-    token_to_save = update_data.LINE_CHANNEL_ACCESS_TOKEN
-    if not token_to_save or token_to_save.endswith("..."):
+    # 如果使用者傳入的 LINE Token 為遮蔽格式，保留現有 Token
+    token_to_save = update_data.LINE_CHANNEL_ACCESS_TOKEN.strip()
+    if "..." in token_to_save or token_to_save == "已設定":
         token_to_save = current_config["LINE_CHANNEL_ACCESS_TOKEN"]
+
+    # 如果使用者傳入的 Discord Webhook URL 為遮蔽格式，保留現有 URL
+    discord_to_save = update_data.DISCORD_WEBHOOK_URL.strip()
+    if "..." in discord_to_save or discord_to_save == "已設定":
+        discord_to_save = current_config["DISCORD_WEBHOOK_URL"]
+    elif discord_to_save and not (
+        discord_to_save.startswith("https://discord.com/api/webhooks/")
+        or discord_to_save.startswith("https://discordapp.com/api/webhooks/")
+    ):
+        raise HTTPException(status_code=400, detail="Discord Webhook URL 格式不正確，應以 https://discord.com/api/webhooks/ 開頭。")
         
     env_lines = [
+        f"DISCORD_WEBHOOK_URL={discord_to_save}",
         f"LINE_CHANNEL_ACCESS_TOKEN={token_to_save}",
-        f"LINE_USER_ID={update_data.LINE_USER_ID}",
+        f"LINE_USER_ID={update_data.LINE_USER_ID.strip()}",
         f"DROP_THRESHOLD={update_data.DROP_THRESHOLD}",
         f"DROP_STEP={update_data.DROP_STEP}",
         f"USE_KD_STRATEGY={1 if update_data.USE_KD_STRATEGY else 0}",
@@ -193,14 +240,13 @@ async def update_config(update_data: ConfigUpdate):
         with open(env_path, "w", encoding="utf-8") as f:
             f.write("\n".join(env_lines) + "\n")
             
-        # 重新載入環境變數
-        import os
+        # 重新載入環境變數並同步更新 os.environ
         from dotenv import load_dotenv
         load_dotenv(env_path, override=True)
         
-        # 立即強制執行一次循環，將新參數套用
+        # 更新數據快取（靜音模式，避免儲存設定瞬間重複發送通知）
         global last_fetch_time, cached_data
-        cached_data = run_tracking_cycle()
+        cached_data = run_tracking_cycle(send_notifications=False)
         last_fetch_time = now_taipei()
         
         return {"success": True, "message": "設定已成功儲存並生效"}

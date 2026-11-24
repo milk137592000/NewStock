@@ -764,6 +764,34 @@ body {
 .text-danger { color: var(--color-danger); }
 .text-warning { color: var(--color-warning); }
 .text-info { color: var(--color-info); }
+.text-discord { color: #5865F2; }
+
+.badge-recommend {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    border-radius: 20px;
+    background: rgba(88, 101, 242, 0.18);
+    color: #818cf8;
+    border: 1px solid rgba(88, 101, 242, 0.35);
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+
+.test-actions-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.btn-discord {
+    background: #5865F2;
+    color: #fff;
+}
+.btn-discord:hover {
+    background: #4752C4;
+    transform: translateY(-1px);
+}
 
 /* 響應式調整 */
 @media (max-width: 1024px) {
