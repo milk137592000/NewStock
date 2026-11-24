@@ -107,10 +107,10 @@ async def get_status():
     global last_fetch_time, cached_data
     now = now_taipei()
     
-    # 若無快取或快取已過期，則重新獲取
+    # 若無快取或快取已過期，則重新獲取最新報價（靜音模式：網頁輪詢不重複發送推播，推播統一由排程器與 /api/trigger 負責）
     if not cached_data or not last_fetch_time or (now - last_fetch_time) > CACHE_DURATION:
         try:
-            cached_data = run_tracking_cycle()
+            cached_data = run_tracking_cycle(send_notifications=False)
             last_fetch_time = now
         except Exception as e:
             logger.error(f"重新獲取資料失敗: {e}")

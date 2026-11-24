@@ -1,11 +1,15 @@
 import os
 import json
+import threading
 import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, date, timezone, timedelta
 from dotenv import load_dotenv
+
+# 防止排程器與 HTTP 請求同時執行造成重複通知的鎖
+_TRACKING_LOCK = threading.Lock()
 
 # 台北時區 (UTC+8)
 TZ_TAIPEI = timezone(timedelta(hours=8))
@@ -217,6 +221,8 @@ def load_state() -> dict:
     """載入警報狀態"""
     default_signal_state = {
         "last_trigger_date": "",
+        "last_notified_date": "",
+        "last_cooldown_notified_week": "",
         "cooldown_until": "",
         "trigger_count_this_year": 0
     }
@@ -407,6 +413,45 @@ def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float
     df['Lower'] = df['MA'] - std_dev * df['Std']
     return df
 
+def _adjust_unadjusted_splits(df: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
+    """偵測並修正 Yahoo Finance 未完整還原的股票分割（例如 ETF 1拆5），避免產生假暴跌與錯誤指標"""
+    if df is None or df.empty or len(df) < 3 or 'Close' not in df.columns:
+        return df
+
+    df = df.copy()
+    closes = df['Close'].astype(float).values
+    price_cols = [c for c in ('Open', 'High', 'Low', 'Close') if c in df.columns]
+
+    # 由舊到新掃描單日價格大幅斷層
+    for i in range(1, len(closes)):
+        prev_c = closes[i - 1]
+        curr_c = closes[i]
+        if prev_c <= 0 or curr_c <= 0:
+            continue
+
+        # 正向股票分割 (例如 1拆4、1拆5)：前一日收盤 >= 當日收盤 1.8 倍
+        if prev_c / curr_c >= 1.8:
+            later_median = float(np.median(closes[i:]))
+            if later_median < prev_c / 1.5:
+                raw_ratio = prev_c / curr_c
+                rounded = round(raw_ratio)
+                ratio = float(rounded) if rounded >= 2 and abs(raw_ratio - rounded) / rounded < 0.18 else raw_ratio
+                df.iloc[:i, [df.columns.get_loc(c) for c in price_cols]] /= ratio
+                closes = df['Close'].astype(float).values
+                print(f"[SPLIT ADJUST] {symbol} 偵測到未還原分割 (ratio={ratio:.2f} at idx={i})，已自動調整歷史價格。")
+        # 反向合併 (併股)：當日收盤 >= 前一日收盤 1.8 倍
+        elif curr_c / prev_c >= 1.8:
+            later_median = float(np.median(closes[i:]))
+            if later_median > prev_c * 1.5:
+                raw_ratio = curr_c / prev_c
+                rounded = round(raw_ratio)
+                ratio = float(rounded) if rounded >= 2 and abs(raw_ratio - rounded) / rounded < 0.18 else raw_ratio
+                df.iloc[:i, [df.columns.get_loc(c) for c in price_cols]] *= ratio
+                closes = df['Close'].astype(float).values
+                print(f"[SPLIT ADJUST] {symbol} 偵測到未還原反分割 (ratio={ratio:.2f} at idx={i})，已自動調整歷史價格。")
+
+    return df
+
 def get_historical_and_indicators(symbol: str, config: dict) -> dict:
     """獲取歷史日 K 線並計算最新的技術指標（供圖表用）"""
     ticker = yf.Ticker(symbol)
@@ -415,6 +460,8 @@ def get_historical_and_indicators(symbol: str, config: dict) -> dict:
     if df.empty:
         print(f"[YFINANCE ERROR] 無法取得 {symbol} 的歷史數據")
         return {}
+
+    df = _adjust_unadjusted_splits(df, symbol=symbol)
         
     # 計算日線 KD 與布林（供前端圖表顯示）
     df = calculate_kd(df, period=config["KD_PERIOD"])
@@ -445,6 +492,8 @@ def get_weekly_indicators(symbol: str, etf_meta: dict) -> dict:
     if df_daily.empty or len(df_daily) < 20:
         print(f"[WEEKLY ERROR] 無法取得 {symbol} 足夠的歷史數據")
         return {}
+
+    df_daily = _adjust_unadjusted_splits(df_daily, symbol=symbol)
     
     # 計算 52 週（約 252 個交易日）最高價
     high_52w = float(df_daily['High'].tail(252).max()) if len(df_daily) >= 252 else float(df_daily['High'].max())
@@ -518,13 +567,13 @@ def check_market_drop(current_index: float, yesterday_close: float, state: dict,
         # wave_high 如果是 0，則以昨日收盤價初始化
         if state["wave_high"] <= 0:
             state["wave_high"] = yesterday_close
-        # 重設 ETF 進場訊號通知狀態 (保留 dict 結構)
+        # 確保 ETF 進場訊號狀態結構完整 (保留冷卻期、年度次數與週提醒記錄，僅修復舊字串格式)
         for key in state.get("signals_notified", {}):
-            if isinstance(state["signals_notified"][key], dict):
-                state["signals_notified"][key]["last_trigger_date"] = ""
-            else:
+            if not isinstance(state["signals_notified"][key], dict):
                 state["signals_notified"][key] = {
                     "last_trigger_date": "",
+                    "last_notified_date": "",
+                    "last_cooldown_notified_week": "",
                     "cooldown_until": "",
                     "trigger_count_this_year": 0
                 }
@@ -659,11 +708,17 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
     if code not in state.get("signals_notified", {}) or isinstance(state["signals_notified"].get(code), str):
         state.setdefault("signals_notified", {})[code] = {
             "last_trigger_date": "",
+            "last_notified_date": "",
+            "last_cooldown_notified_week": "",
             "cooldown_until": "",
             "trigger_count_this_year": 0
         }
     
     sig_state = state["signals_notified"][code]
+
+    # 嚴格去重 1：同一天同一檔 ETF 最多只發送一次訊號通知（無論是否在冷卻期）
+    if sig_state.get("last_notified_date") == today_str or sig_state.get("last_trigger_date") == today_str:
+        return []
     
     # 年度重設（每年 1 月 1 日）
     current_year = str(now_taipei().year)
@@ -703,6 +758,12 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
     cooldown_until = sig_state.get("cooldown_until", "")
     if cooldown_until and today_str <= cooldown_until:
         in_cooldown = True
+
+    # 嚴格去重 2：若處於冷卻期內，每週最多只發一次冷卻提醒，避免連續多天重複轟炸
+    iso_year, iso_week, _ = today_taipei().isocalendar()
+    current_week_str = f"{iso_year}-W{iso_week:02d}"
+    if in_cooldown and sig_state.get("last_cooldown_notified_week") == current_week_str:
+        return []
     
     # 跌幅分層判斷
     if drop_pct < 10:
@@ -730,7 +791,7 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
         cooldown_note = "✅ 不在冷卻期"
     
     strategies_str = " / ".join(triggered_strategies)
-    trigger_count = sig_state.get("trigger_count_this_year", 0) + 1
+    trigger_count = sig_state.get("trigger_count_this_year", 0) + (0 if in_cooldown else 1)
     
     msg = (
         f"📊【{name} ({code}) — 進場訊號觸發】\n"
@@ -747,8 +808,11 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
     )
     messages.append(msg)
     
-    # 更新狀態（不在冷卻期才更新觸發記錄）
-    if not in_cooldown:
+    # 記錄已通知日期（無論是否在冷卻期都要寫入，徹底防止當天重複洗版）
+    sig_state["last_notified_date"] = today_str
+    if in_cooldown:
+        sig_state["last_cooldown_notified_week"] = current_week_str
+    else:
         sig_state["last_trigger_date"] = today_str
         sig_state["trigger_count_this_year"] = trigger_count
         # 設定冷卻期：20 個交易日 ≈ 28 天
@@ -758,147 +822,141 @@ def check_etf_signals_weekly(code: str, etf_meta: dict, weekly_data: dict, state
     return messages
 
 def run_tracking_cycle(send_notifications: bool = True) -> dict:
-    """執行一次完整的監控與分析循環"""
-    print(f"\n[TRACKER] 開始執行監控循環（通知={send_notifications}）：{now_taipei().isoformat()}")
-    config = get_env_config()
-    state = load_state()
-    
-    # 1. 取得即時數據與歷史數據
-    # 台股即時
-    realtime = get_twse_realtime()
-    
-    # 大盤指數 (t00)
-    t00_info = realtime.get("t00")
-    if t00_info:
-        current_index = t00_info["price"]
-        yesterday_close = t00_info["yesterday_close"]
-    else:
-        # 備份：使用 yfinance 抓取
-        print("[TRACKER] 無法取得證交所即時大盤資料，改用 yfinance 備份數據")
-        try:
-            twii = yf.Ticker("^TWII")
-            hist = twii.history(period="2d")
-            if not hist.empty:
-                current_index = float(hist.iloc[-1]["Close"])
-                yesterday_close = float(hist.iloc[-2]["Close"]) if len(hist) > 1 else current_index
-            else:
+    """執行一次完整的監控與分析循環（含併發鎖保護）"""
+    with _TRACKING_LOCK:
+        print(f"\n[TRACKER] 開始執行監控循環（通知={send_notifications}）：{now_taipei().isoformat()}")
+        config = get_env_config()
+        state = load_state()
+        
+        # 1. 取得即時數據與歷史數據
+        realtime = get_twse_realtime()
+        
+        # 大盤指數 (t00)
+        t00_info = realtime.get("t00")
+        if t00_info:
+            current_index = t00_info["price"]
+            yesterday_close = t00_info["yesterday_close"]
+        else:
+            print("[TRACKER] 無法取得證交所即時大盤資料，改用 yfinance 備份數據")
+            try:
+                twii = yf.Ticker("^TWII")
+                hist = twii.history(period="2d")
+                if not hist.empty:
+                    current_index = float(hist.iloc[-1]["Close"])
+                    yesterday_close = float(hist.iloc[-2]["Close"]) if len(hist) > 1 else current_index
+                else:
+                    current_index, yesterday_close = 0.0, 0.0
+            except Exception as e:
+                print(f"[YFINANCE ERROR] 獲取 ^TWII 異常: {e}")
                 current_index, yesterday_close = 0.0, 0.0
-        except Exception as e:
-            print(f"[YFINANCE ERROR] 獲取 ^TWII 異常: {e}")
-            current_index, yesterday_close = 0.0, 0.0
+                
+        # 2. 獲取所有追蹤 ETF 的日線指標（圖表用）和週線指標（訊號用）
+        etf_daily = {}
+        etf_weekly = {}
+        for code, meta in ETF_LIST.items():
+            try:
+                info = get_historical_and_indicators(meta["yf"], config)
+                if info:
+                    if code in realtime and realtime[code]["price"] > 0:
+                        info["price"] = realtime[code]["price"]
+                    etf_daily[code] = info
+            except Exception as e:
+                print(f"[TRACKER ERROR] 獲取 {code} 日線指標失敗: {e}")
+            try:
+                weekly = get_weekly_indicators(meta["yf"], meta)
+                if weekly:
+                    if code in realtime and realtime[code]["price"] > 0:
+                        rt_price = realtime[code]["price"]
+                        weekly["price"] = rt_price
+                        if weekly["high_52w"] > 0:
+                            weekly["drop_from_high_pct"] = ((weekly["high_52w"] - rt_price) / weekly["high_52w"]) * 100
+                    etf_weekly[code] = weekly
+            except Exception as e:
+                print(f"[TRACKER ERROR] 獲取 {code} 週線指標失敗: {e}")
             
-    # 2. 獲取所有追蹤 ETF 的日線指標（圖表用）和週線指標（訊號用）
-    etf_daily = {}
-    etf_weekly = {}
-    for code, meta in ETF_LIST.items():
-        try:
-            # 日線（前端圖表）
-            info = get_historical_and_indicators(meta["yf"], config)
-            if info:
-                if code in realtime:
-                    info["price"] = realtime[code]["price"]
-                etf_daily[code] = info
-        except Exception as e:
-            print(f"[TRACKER ERROR] 獲取 {code} 日線指標失敗: {e}")
-        try:
-            # 週線（進場訊號）
-            weekly = get_weekly_indicators(meta["yf"], meta)
-            if weekly:
-                if code in realtime:
-                    weekly["price"] = realtime[code]["price"]
-                etf_weekly[code] = weekly
-        except Exception as e:
-            print(f"[TRACKER ERROR] 獲取 {code} 週線指標失敗: {e}")
+        all_notifications = []
+        routed_notifications = []
         
-    all_notifications = []
-    routed_notifications = []
-    
-    # 3. 檢查大盤下跌
-    drop_info = {}
-    if current_index > 0 and yesterday_close > 0:
-        drop_result = check_market_drop(current_index, yesterday_close, state, config)
-        for m in drop_result["messages"]:
-            all_notifications.append(m)
-            routed_notifications.append((m, "market"))
-        drop_info = {
-            "current_index": current_index,
-            "yesterday_close": yesterday_close,
-            "today_drop": drop_result["today_drop"],
-            "cumulative_drop": drop_result["cumulative_drop"]
-        }
-    else:
-        print("[TRACKER WARNING] 大盤價格異常，跳過大盤跌幅檢查。")
-        drop_info = {
-            "current_index": current_index,
-            "yesterday_close": yesterday_close,
-            "today_drop": 0.0,
-            "cumulative_drop": 0.0
-        }
-        
-    # 4. 檢查所有 ETF 進場訊號（用週線指標）
-    etf_info = {}
-    for code, meta in ETF_LIST.items():
-        daily = etf_daily.get(code)
-        weekly = etf_weekly.get(code)
-        
-        # 基本卡片資料來自日線
-        if daily:
-            card_data = {
-                "price": daily["price"],
-                "K": daily["K"],
-                "D": daily["D"],
-                "MA": daily["MA"],
-                "Lower": daily["Lower"],
-                "signal": False,
-                "group": meta["group"],
-                "group_label": GROUP_LABELS.get(meta["group"], ""),
+        # 3. 檢查大盤下跌
+        drop_info = {}
+        if current_index > 0 and yesterday_close > 0:
+            drop_result = check_market_drop(current_index, yesterday_close, state, config)
+            for m in drop_result["messages"]:
+                all_notifications.append(m)
+                routed_notifications.append((m, "market"))
+            drop_info = {
+                "current_index": current_index,
+                "yesterday_close": yesterday_close,
+                "today_drop": drop_result["today_drop"],
+                "cumulative_drop": drop_result["cumulative_drop"]
+            }
+        else:
+            print("[TRACKER WARNING] 大盤價格異常，跳過大盤跌幅檢查。")
+            drop_info = {
+                "current_index": current_index,
+                "yesterday_close": yesterday_close,
+                "today_drop": 0.0,
+                "cumulative_drop": 0.0
             }
             
-            # 週線資料（補充到卡片）
-            if weekly:
-                card_data.update({
-                    "weekly_K": weekly["weekly_K"],
-                    "weekly_D": weekly["weekly_D"],
-                    "weekly_MA": weekly["weekly_MA"],
-                    "weekly_Lower": weekly["weekly_Lower"],
-                    "high_52w": weekly["high_52w"],
-                    "drop_from_high_pct": weekly["drop_from_high_pct"],
-                })
-                
-                # 檢查冷卻期狀態
-                sig_state = state.get("signals_notified", {}).get(code, {})
-                cooldown_until = sig_state.get("cooldown_until", "") if isinstance(sig_state, dict) else ""
-                card_data["in_cooldown"] = bool(cooldown_until and today_taipei().isoformat() <= cooldown_until)
-                card_data["cooldown_until"] = cooldown_until
-                card_data["trigger_count"] = sig_state.get("trigger_count_this_year", 0) if isinstance(sig_state, dict) else 0
-                
-                # 用週線訊號判斷進場
-                sig = check_etf_signals_weekly(code, meta, weekly, state, config)
-                for m in sig:
-                    all_notifications.append(m)
-                    routed_notifications.append((m, "signal"))
-                card_data["signal"] = len(sig) > 0
+        # 4. 檢查所有 ETF 進場訊號（用週線指標）
+        etf_info = {}
+        for code, meta in ETF_LIST.items():
+            daily = etf_daily.get(code)
+            weekly = etf_weekly.get(code)
             
-            etf_info[code] = card_data
+            if daily:
+                card_data = {
+                    "price": daily["price"],
+                    "K": daily["K"],
+                    "D": daily["D"],
+                    "MA": daily["MA"],
+                    "Lower": daily["Lower"],
+                    "signal": False,
+                    "group": meta["group"],
+                    "group_label": GROUP_LABELS.get(meta["group"], ""),
+                }
+                
+                if weekly:
+                    card_data.update({
+                        "weekly_K": weekly["weekly_K"],
+                        "weekly_D": weekly["weekly_D"],
+                        "weekly_MA": weekly["weekly_MA"],
+                        "weekly_Lower": weekly["weekly_Lower"],
+                        "high_52w": weekly["high_52w"],
+                        "drop_from_high_pct": weekly["drop_from_high_pct"],
+                    })
+                    
+                    sig_state = state.get("signals_notified", {}).get(code, {})
+                    cooldown_until = sig_state.get("cooldown_until", "") if isinstance(sig_state, dict) else ""
+                    card_data["in_cooldown"] = bool(cooldown_until and today_taipei().isoformat() <= cooldown_until)
+                    card_data["cooldown_until"] = cooldown_until
+                    card_data["trigger_count"] = sig_state.get("trigger_count_this_year", 0) if isinstance(sig_state, dict) else 0
+                    
+                    sig = check_etf_signals_weekly(code, meta, weekly, state, config)
+                    for m in sig:
+                        all_notifications.append(m)
+                        routed_notifications.append((m, "signal"))
+                    card_data["signal"] = len(sig) > 0
+                
+                etf_info[code] = card_data
+            
+        # 5. 發送通知（只有在允許發送通知時才推播並寫入 state，避免看盤輪詢誤耗或覆寫紀錄）
+        if send_notifications:
+            for msg, ch_type in routed_notifications:
+                send_notification(msg, channel_type=ch_type)
+            save_state(state)
+        else:
+            if all_notifications:
+                print(f"[TRACKER] 靜音模式，略過發送 {len(all_notifications)} 則通知且不覆寫狀態檔。")
         
-    # 5. 發送通知（支援 Discord 分頻道 Webhook 與 LINE）
-    if send_notifications:
-        for msg, ch_type in routed_notifications:
-            send_notification(msg, channel_type=ch_type)
-    else:
-        if all_notifications:
-            print(f"[TRACKER] 靜音模式，略過發送 {len(all_notifications)} 則通知。")
-        
-    # 儲存狀態
-    save_state(state)
-    
-    return {
-        "timestamp": now_taipei().isoformat(),
-        "drop_info": drop_info,
-        "etf_info": etf_info,
-        "notified_messages": all_notifications,
-        "state": state
-    }
+        return {
+            "timestamp": now_taipei().isoformat(),
+            "drop_info": drop_info,
+            "etf_info": etf_info,
+            "notified_messages": all_notifications,
+            "state": state
+        }
 
 def run_daily_etf_analysis(force: bool = False, send_line: bool = True) -> dict:
     """每個交易日執行一次的長線 ETF 每日精選與買進評估"""
