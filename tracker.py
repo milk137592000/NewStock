@@ -236,7 +236,7 @@ def load_state() -> dict:
         "wave_notified_drops": [],
         "signals_notified": {
             code: dict(default_signal_state) for code in
-            ["0050", "00646", "00692", "00850", "00662", "00830", "00878"]
+            ["0050", "00646", "00692", "00850", "00662", "00830", "00878", "00713"]
         },
         "last_biweekly_date": ""
     }
@@ -248,6 +248,9 @@ def load_state() -> dict:
                 for k, v in default_state.items():
                     if k not in state:
                         state[k] = v
+                for code in default_state["signals_notified"]:
+                    if code not in state.get("signals_notified", {}):
+                        state.setdefault("signals_notified", {})[code] = dict(default_signal_state)
                 return state
         except Exception as e:
             print(f"[STATE ERROR] 讀取狀態檔失敗，使用預設值: {e}")
@@ -320,19 +323,25 @@ ETF_LIST = {
               "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0},
     "00878": {"name": "國泰永續高股息", "yf": "00878.TW", "exchange": "tse",
               "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8},
+    "00713": {"name": "元大台灣高息低波", "yf": "00713.TW", "exchange": "tse",
+              "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8},
     "00662": {"name": "富邦NASDAQ",     "yf": "00662.TW", "exchange": "tse",
               "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
     "00830": {"name": "國泰費城半導體", "yf": "00830.TW", "exchange": "tse",
               "group": "high_vol", "kd_limit": 15, "bb_std": 2.3},
 }
 
-# 長線定期觀察與推薦候選池（非高股息、市值與全球核心潛力標的）
+# 長線定期觀察與推薦候選池（市值核心、全球跨產業與債券防禦配置標的）
 WATCHLIST_ETF = {
-    "00757": {"name": "統一FANG+",       "yf": "00757.TW", "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "美股十大科技巨頭"},
-    "00924": {"name": "復華S&P500成長", "yf": "00924.TW", "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "美股成長龍頭"},
-    "00645": {"name": "富邦日本",       "yf": "00645.TW", "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "日本東證核心"},
-    "0051":  {"name": "元大中型100",    "yf": "0051.TW",  "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "台股中型成長爆發"},
-    "00762": {"name": "元大全球AI",     "yf": "00762.TW", "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "全球AI軟硬體龍頭"},
+    "00757":  {"name": "統一FANG+",       "yf": "00757.TW",   "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "美股十大科技巨頭"},
+    "00924":  {"name": "復華S&P500成長",  "yf": "00924.TW",   "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "美股成長龍頭"},
+    "00645":  {"name": "富邦日本",        "yf": "00645.TW",   "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "日本東證核心"},
+    "0051":   {"name": "元大中型100",     "yf": "0051.TW",    "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "台股中型成長爆發"},
+    "00762":  {"name": "元大全球AI",      "yf": "00762.TW",   "group": "high_vol", "kd_limit": 15, "bb_std": 2.3, "theme": "全球AI軟硬體龍頭"},
+    "00916":  {"name": "國泰全球品牌50",  "yf": "00916.TW",   "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "全球跨產業龍頭品牌"},
+    "00926":  {"name": "凱基全球菁英55",  "yf": "00926.TW",   "group": "mid_vol",  "kd_limit": 20, "bb_std": 2.0, "theme": "全球跨產業精選"},
+    "00772B": {"name": "中信高評級公司債", "yf": "00772B.TWO", "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8, "theme": "投資級債券防禦收息"},
+    "00719B": {"name": "元大美債1-3年",   "yf": "00719B.TWO", "group": "low_vol",  "kd_limit": 25, "bb_std": 1.8, "theme": "短債現金加碼子彈桶"},
 }
 
 # 冷卻期天數（交易日）
