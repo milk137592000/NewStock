@@ -1,132 +1,167 @@
-import os
-import json
+from datetime import timedelta
 import pandas as pd
-from tracker import check_market_drop, check_etf_signals, get_env_config
+from tracker import (
+    check_market_drop,
+    check_etf_signals_weekly,
+    evaluate_etf_entry,
+    calculate_rsi,
+    calculate_kd,
+    _adjust_unadjusted_splits,
+    get_env_config,
+    ETF_LIST,
+    today_taipei,
+)
+
+
+def _make_weekly_sample(**overrides):
+    data = {
+        "price": 100.0,
+        "high_52w": 115.0,
+        "drop_from_high_pct": 13.04,
+        "weekly_K": 30.0,
+        "weekly_D": 35.0,
+        "prev_weekly_K": 32.0,
+        "prev_weekly_D": 34.0,
+        "weekly_RSI": 42.0,
+        "weekly_MA": 106.0,
+        "weekly_Upper": 114.0,
+        "weekly_Lower": 98.0,
+        "bias_20w": -5.66,
+        "daily_K": 35.0,
+        "daily_D": 38.0,
+        "prev_daily_K": 36.0,
+        "prev_daily_D": 37.0,
+        "daily_RSI": 42.0,
+        "MA60": 105.0,
+        "MA200": 104.0,
+        "kd_limit": 20.0,
+        "bb_std": 2.0,
+    }
+    data.update(overrides)
+    return data
+
+
+def _make_clean_state():
+    return {
+        "date": today_taipei().isoformat(),
+        "yesterday_close": 23000.0,
+        "today_notified_drops": [],
+        "wave_high": 23000.0,
+        "wave_notified_drops": [500, 600, 700, 800, 900, 1000],
+        "signals_notified": {},
+        "last_biweekly_date": "",
+    }
+
 
 def run_tests():
-    print("=== 開始測試台灣大盤下跌警報邏輯 ===")
+    print("=== 1. 測試技術指標計算 (RSI / KD / 股票分割還原) ===")
+    closes = [100 + i for i in range(20)]
+    df_up = pd.DataFrame({
+        "Open": closes,
+        "High": [c + 1 for c in closes],
+        "Low": [c - 1 for c in closes],
+        "Close": closes,
+    })
+    df_rsi = calculate_rsi(df_up, period=14)
+    assert df_rsi["RSI"].iloc[-1] == 100.0, f"全漲波段 RSI 應為 100，實際為 {df_rsi['RSI'].iloc[-1]}"
+
+    df_kd = calculate_kd(df_up, period=9)
+    assert df_kd["K"].iloc[-1] > 80, "連續上漲波段 K 值應大於 80"
+
+    # 測試 1拆5 未還原股價自動校正
+    split_closes = [110.0, 112.0, 113.5, 22.8, 22.6, 22.9]
+    df_split = pd.DataFrame({
+        "Open": split_closes,
+        "High": [c + 0.5 for c in split_closes],
+        "Low": [c - 0.5 for c in split_closes],
+        "Close": split_closes,
+    })
+    df_adj = _adjust_unadjusted_splits(df_split, symbol="00662.TW")
+    assert 21.0 <= df_adj["Close"].iloc[0] <= 23.0, f"1拆5歷史價應縮放約5倍，實際為 {df_adj['Close'].iloc[0]}"
+
+    print("=== 2. 測試新版 ETF 多週期入場規則 ===")
     config = get_env_config()
-    
-    # 1. 測試大盤今日下跌
-    yesterday_close = 23000.0
-    
-    # 初始狀態：預先填滿波段通知，以便「單純測試當日下跌」
-    state = {
-        "date": "2026-07-08",
-        "yesterday_close": yesterday_close,
-        "today_notified_drops": [],
-        "wave_high": yesterday_close,
-        "wave_notified_drops": [500, 600, 700, 800, 900, 1000],  # 屏蔽波段警報
-        "signals_notified": {
-            "0050.TW": "",
-            "00646.TW": ""
-        }
-    }
-    
-    # 測試點 1：下跌 300 點 (未達 500)
-    current_index = 22700.0
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"價格: {current_index} (跌 {yesterday_close - current_index} 點)")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    assert len(res['messages']) == 0, "下跌未達 500 點不應發送通知"
-    
-    # 測試點 2：下跌 520 點 (突破 500)
-    current_index = 22480.0
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"價格: {current_index} (跌 {yesterday_close - current_index} 點)")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    for m in res['messages']:
-        print(f"   [通知內容]:\n{m}")
-    assert len(res['messages']) == 1, "跌破 500 點應發送 1 條通知"
-    assert 500 in state["today_notified_drops"], "500 點關卡應記錄於今日已通知列表中"
-    
-    # 測試點 3：再次查詢，價格未變
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"價格不變: {current_index}")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    assert len(res['messages']) == 0, "價格未變不應重複通知"
-    
-    # 測試點 4：繼續下跌至跌破 610 點 (突破 600 關卡)
-    current_index = 22390.0
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"價格: {current_index} (跌 {yesterday_close - current_index} 點)")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    for m in res['messages']:
-        print(f"   [通知內容]:\n{m}")
-    assert len(res['messages']) == 1, "再跌破 100 點 (600 關卡) 應再發送 1 條通知"
-    assert 600 in state["today_notified_drops"], "600 點關卡應記錄於今日已通知列表中"
-    
-    # 測試點 5：暴跌至跌破 850 點 (一口氣跨過 700 與 800 關卡)
-    current_index = 22120.0
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"價格: {current_index} (跌 {yesterday_close - current_index} 點)")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    for m in res['messages']:
-        print(f"   [通知內容]:\n{m}")
-    assert len(res['messages']) == 1, "應發送 1 條整合通知"
-    assert 700 in state["today_notified_drops"] and 800 in state["today_notified_drops"], "700 和 800 點關卡都應被標記為已通知"
+    config["USE_KD_STRATEGY"] = True
+    config["USE_BOLLINGER_STRATEGY"] = True
+    config["KD_LIMIT"] = 20.0
 
-    # 測試點 6：測試「波段累積下跌」（清空波段警報，屏蔽今日警報）
-    print("-> 轉換為測試波段累積下跌")
-    state["today_notified_drops"] = [500, 600, 700, 800, 900, 1000] # 屏蔽今日警報
-    state["wave_notified_drops"] = []
-    state["wave_high"] = 23000.0
-    current_index = 22400.0 # 累積下跌 600 點
-    res = check_market_drop(current_index, yesterday_close, state, config)
-    print(f"累積價格: {current_index} (相較於波段最高 23000.0 跌 600 點)")
-    print(f"-> 觸發通知數量: {len(res['messages'])}")
-    for m in res['messages']:
-        print(f"   [通知內容]:\n{m}")
-    assert len(res['messages']) == 1, "波段下跌 600 點應發送 1 條通知"
-    assert 500 in state["wave_notified_drops"] and 600 in state["wave_notified_drops"], "500 與 600 波段關卡應記錄"
+    # 案例 A：低波動組 00646 僅跌幅 4.8% (<7%)，即使跌破布林下軌也只觀察，不可發訊號或鎖冷卻期
+    state = _make_clean_state()
+    w_tier0 = _make_weekly_sample(
+        price=75.9,
+        high_52w=79.7,
+        drop_from_high_pct=4.77,
+        weekly_Lower=76.5,
+        weekly_MA=77.1,
+    )
+    eval0 = evaluate_etf_entry("00646", ETF_LIST["00646"], w_tier0, config)
+    assert eval0["tier"] == 0 and eval0["observation_only"] and not eval0["actionable"]
+    msgs0 = check_etf_signals_weekly("00646", ETF_LIST["00646"], w_tier0, state, config)
+    assert len(msgs0) == 0, "Tier 0 僅觀察，不應發送買進通知"
+    assert state["signals_notified"]["00646"]["cooldown_until"] == "", "Tier 0 不得鎖定冷卻期"
 
+    # 案例 B：中波動組 0050 回檔 12.5% (第1層) + 週 KD 低檔金叉 -> 觸發並鎖定第 1 層冷卻
+    w_0050_t1 = _make_weekly_sample(
+        price=102.0,
+        high_52w=116.6,
+        drop_from_high_pct=12.5,
+        weekly_K=22.0,
+        weekly_D=20.5,
+        prev_weekly_K=18.0,
+        prev_weekly_D=21.0,
+        weekly_RSI=34.0,
+        MA200=105.0,
+    )
+    msgs_t1 = check_etf_signals_weekly("0050", ETF_LIST["0050"], w_0050_t1, state, config)
+    assert len(msgs_t1) == 1, "第 1 層應觸發進場通知"
+    assert state["signals_notified"]["0050"]["last_trigger_tier"] == 1
+    assert "0.5 倍" in msgs_t1[0]
 
-    print("\n=== 開始測試 ETF 進場訊號邏輯 ===")
-    # 模擬 0050 的技術指標數據
-    # 情況 A：KD 低檔黃金交叉 (K 由 15 突破 D 18 到 K:21 D:19)
-    etf_data = {
-        "price": 150.0,
-        "K": 21.0,
-        "D": 19.0,
-        "prev_K": 15.0,
-        "prev_D": 18.0,
-        "MA": 155.0,
-        "Lower": 148.0 # 布林下軌
-    }
-    
-    # K 升到 21 突破 D，但是 K=21 超過我們預設的 KD_LIMIT (20) 了嗎？
-    # 根據我們的 tracker: K < LIMIT 且 D < LIMIT。這裡 K=21 超過了 20。
-    # 讓我們將 K 設為 19.5, D 設為 19.0，前一天 K 設為 15.0, D 設為 18.0。這樣兩者都小於 20。
-    etf_data["K"] = 19.5
-    etf_data["D"] = 19.0
-    
-    signals = check_etf_signals("0050.TW", "元大台灣50", etf_data, state, config)
-    print(f"測試 A (KD低檔交叉):")
-    print(f"-> 觸發訊號數量: {len(signals)}")
-    for s in signals:
-        print(f"   [訊號內容]:\n{s}")
-    assert len(signals) == 1, "應觸發 KD 黃金交叉進場訊號"
-    
-    # 情況 B：價格跌破布林下軌 (price 145.0 < Lower 148.0)
-    # 重設訊號狀態
-    state["signals_notified"]["0050.TW"] = ""
-    etf_data_bb = {
-        "price": 145.0,
-        "K": 35.0, # 非低檔交叉
-        "D": 40.0,
-        "prev_K": 36.0,
-        "prev_D": 39.0,
-        "MA": 155.0,
-        "Lower": 148.0
-    }
-    signals_bb = check_etf_signals("0050.TW", "元大台灣50", etf_data_bb, state, config)
-    print(f"測試 B (跌破布林下軌):")
-    print(f"-> 觸發訊號數量: {len(signals_bb)}")
-    for s in signals_bb:
-        print(f"   [訊號內容]:\n{s}")
-    assert len(signals_bb) == 1, "應觸發跌破布林通道下軌進場訊號"
+    # 同天再次呼叫應去重
+    assert len(check_etf_signals_weekly("0050", ETF_LIST["0050"], w_0050_t1, state, config)) == 0
 
-    print("\n所有核心邏輯單元測試通過！")
+    # 案例 C：冷卻期內若隔天續跌擴大到第 2 層 (-18.0%) -> 階梯升級解鎖
+    yesterday_str = (today_taipei() - timedelta(days=2)).isoformat()
+    state["signals_notified"]["0050"]["last_notified_date"] = yesterday_str
+    state["signals_notified"]["0050"]["last_trigger_date"] = yesterday_str
+    w_0050_t2 = _make_weekly_sample(
+        price=95.6,
+        high_52w=116.6,
+        drop_from_high_pct=18.0,
+        weekly_K=20.0,
+        weekly_D=25.0,
+        weekly_RSI=31.0,
+        weekly_MA=104.0,
+        MA200=105.0,
+    )
+    msgs_t2 = check_etf_signals_weekly("0050", ETF_LIST["0050"], w_0050_t2, state, config)
+    assert len(msgs_t2) == 1 and "階梯升級" in msgs_t2[0], "跌入更高加碼層級應解鎖階梯補買通知"
+    assert state["signals_notified"]["0050"]["last_trigger_tier"] == 2
+
+    # 案例 D：高波動組 00830 在 -12% 時屬正常波動 (Tier 0)，必須 >= 15% 才入第 1 層；>= 30% 第 3 層顯示無矛盾 1.0 倍上限
+    w_00830_12 = _make_weekly_sample(drop_from_high_pct=12.0, weekly_RSI=31.0)
+    assert evaluate_etf_entry("00830", ETF_LIST["00830"], w_00830_12, config)["tier"] == 0
+    w_00830_34 = _make_weekly_sample(
+        price=67.45,
+        high_52w=102.2,
+        drop_from_high_pct=34.0,
+        weekly_K=17.7,
+        weekly_D=26.3,
+        weekly_RSI=34.0,
+        weekly_MA=81.7,
+        weekly_Lower=65.1,
+        MA200=85.0,
+    )
+    eval_830 = evaluate_etf_entry("00830", ETF_LIST["00830"], w_00830_34, config)
+    assert eval_830["tier"] == 3 and eval_830["actionable"], "緩跌 -34% 且處於週線下與低 RSI 應被辨識為第 3 層買點"
+    assert "1.5 倍" not in eval_830["tier_action"], "高波動組不應出現矛盾的 1.5 倍建議"
+
+    print("=== 3. 測試大盤下跌警報回歸檢查 ===")
+    res = check_market_drop(22700.0, 23000.0, state, config)
+    assert len(res["messages"]) == 0
+
+    print("\n所有測試皆通過！")
+
 
 if __name__ == "__main__":
     run_tests()

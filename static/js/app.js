@@ -385,14 +385,25 @@ function updateEtfCard(id, etfData, refClose) {
     const priceEl = document.getElementById(`${id}-price`);
     const changeEl = document.getElementById(`${id}-change`);
     const kdEl = document.getElementById(`${id}-kd`);
+    const scoreEl = document.getElementById(`${id}-score`);
     const badgeEl = document.getElementById(`${id}-signal-badge`);
     const dropEl = document.getElementById(`${id}-drop52w`);
     const cooldownEl = document.getElementById(`${id}-cooldown`);
     
     if (priceEl) priceEl.textContent = etfData.price.toFixed(2);
     
-    // 顯示日線 KD
-    if (kdEl) kdEl.textContent = `K: ${etfData.K.toFixed(1)} / D: ${etfData.D.toFixed(1)}`;
+    // 顯示日線 KD 與週/日 RSI
+    if (kdEl) {
+        const weeklyRsi = etfData.weekly_RSI !== undefined ? etfData.weekly_RSI.toFixed(0) : '--';
+        const dailyRsi = etfData.RSI !== undefined ? etfData.RSI.toFixed(0) : '--';
+        kdEl.textContent = `K:${etfData.K.toFixed(0)}/D:${etfData.D.toFixed(0)} ｜ 週RSI:${weeklyRsi} 日:${dailyRsi}`;
+    }
+
+    // 綜合進場評分與年線狀態
+    if (scoreEl && etfData.entry_score !== undefined) {
+        const ma200Note = etfData.below_ma200 ? ' (年線下)' : '';
+        scoreEl.textContent = `${etfData.entry_score}/100 ${etfData.score_label || ''}${ma200Note}`;
+    }
     
     // 52 週高點跌幅
     if (dropEl && etfData.drop_from_high_pct !== undefined) {
@@ -430,8 +441,12 @@ function updateEtfCard(id, etfData, refClose) {
     // 進場訊號 Badge
     if (badgeEl) {
         if (etfData.signal) {
+            const tierTag = etfData.entry_tier ? `・第${etfData.entry_tier}層` : '';
             badgeEl.className = 'signal-badge buy';
-            badgeEl.textContent = '買進訊號';
+            badgeEl.textContent = `買進訊號${tierTag}`;
+        } else if (etfData.observation_only) {
+            badgeEl.className = 'signal-badge watch';
+            badgeEl.textContent = '偏低觀察 (未達第1層跌幅)';
         } else {
             badgeEl.className = 'signal-badge';
             badgeEl.textContent = '無訊號';
@@ -715,16 +730,17 @@ function renderBiweeklyContent(data) {
     top3.forEach((item, idx) => {
         const rank = idx + 1;
         const dropClass = item.drop_pct >= 20 ? 'drop-severe' : (item.drop_pct >= 15 ? 'drop-high' : (item.drop_pct >= 10 ? 'drop-mid' : 'drop-low'));
+        const wRsi = item.weekly_rsi !== undefined ? item.weekly_rsi.toFixed(1) : '--';
         top3Html += `
             <div class="top3-card rank-${rank}">
-                <div class="top3-rank-badge">NO.${rank} 首選</div>
+                <div class="top3-rank-badge">NO.${rank} 首選｜評分 ${item.score}</div>
                 <div class="top3-name">${item.name} (${item.code})</div>
                 <div class="top3-theme"><i class="fa-solid fa-tag"></i> ${item.theme}</div>
                 <div class="top3-tier">${item.tier_label}</div>
                 <div class="top3-metrics">
                     <span>市價: <b>${item.price.toFixed(2)}</b></span>
                     <span>距52週高: <b class="${dropClass}">-${item.drop_pct.toFixed(1)}%</b></span>
-                    <span>週KD: <b>${item.weekly_k.toFixed(1)}/${item.weekly_d.toFixed(1)}</b></span>
+                    <span>週RSI/KD: <b>${wRsi} / ${item.weekly_k.toFixed(0)}</b></span>
                 </div>
             </div>
         `;
@@ -737,6 +753,7 @@ function renderBiweeklyContent(data) {
         const typeBadge = item.type === '觀察候選' 
             ? '<span class="card-tag group-low">觀察候選</span>' 
             : '<span class="card-tag group-mid">現有核心</span>';
+        const wRsi = item.weekly_rsi !== undefined ? item.weekly_rsi.toFixed(1) : '--';
         
         tableRows += `
             <tr>
@@ -747,8 +764,8 @@ function renderBiweeklyContent(data) {
                 <td>$${item.price.toFixed(2)}</td>
                 <td>$${item.high_52w.toFixed(2)}</td>
                 <td class="${dropClass}"><b>-${item.drop_pct.toFixed(1)}%</b></td>
-                <td>${item.weekly_k.toFixed(1)} / ${item.weekly_d.toFixed(1)}</td>
-                <td>${item.tier_label}</td>
+                <td>${wRsi} / ${item.weekly_k.toFixed(0)}</td>
+                <td><b>${item.score}</b>・${item.tier_label}</td>
             </tr>
         `;
     });
@@ -771,8 +788,8 @@ function renderBiweeklyContent(data) {
                         <th>目前市價</th>
                         <th>52週高點</th>
                         <th>距高點跌幅</th>
-                        <th>週 KD (9W)</th>
-                        <th>加碼建議位階</th>
+                        <th>週 RSI / K</th>
+                        <th>評分與加碼建議位階</th>
                     </tr>
                 </thead>
                 <tbody>

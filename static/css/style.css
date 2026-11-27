@@ -416,6 +416,12 @@ body {
     animation: breathing 2s infinite ease-in-out;
 }
 
+.signal-badge.watch {
+    background: rgba(250, 204, 21, 0.14);
+    color: #facc15;
+    border-color: rgba(250, 204, 21, 0.35);
+}
+
 @keyframes breathing {
     0%, 100% { opacity: 0.9; }
     50% { opacity: 0.5; }
